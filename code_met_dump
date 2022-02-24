@@ -1,0 +1,317 @@
+qsub -o output.txt -e error.txt -m beas mr_job_script.sh
+qstat -j 30091552
+
+# CHECK WHICH METABOLITES ARE AVAILABLE FOR MR - 20220218
+# List available GWAS
+#ao <- available_outcomes()
+#ao_df <- as.data.frame(ao)
+#ao_new <- ao_df[which(ao_df$id %in% raw$metabolite),]
+#dim(ao_new) # 237
+#length(unique(ao_new$id)) # 237
+#if(!require(Hmisc)) {install.packages("Hmisc"); library(Hmisc)}
+#raw$metabolite[which(raw$metabolite %nin% ao_df$id)]
+#raw$metabolite[grep("IDL", raw$metabolite)]
+
+##################################################
+########## DO REGRESSION ANALYSIS ON OUTCOME - 20220217
+##################################################
+
+ish -l h_rt=12:00:00 -l h_vmem=20g
+use R-3.5 
+cd ~/gen_met_rep
+R
+
+path = "/home/unix/jiwolee/gen_met_rep/"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(ggplot2)) {install.packages("ggplot2"); library(ggplot2)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "met/raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+raw$metabolite = convert_camel_case(raw$metabolite)
+met_list = raw$metabolite
+total = fread(paste0(path, "total_20220115.csv"), header = TRUE, stringsAsFactors = FALSE)
+
+temp = total
+outcome_list = c("cad_prev", "cad_incd", "pad_prev", "pad_incd", "vte_prev", "vte_incd")
+res = NULL
+for(j in 1:length(outcome_list)) {
+	for(i in 1:length(met_list)) {
+		print(paste0(i, ": ", met_list[i], " for ", outcome_list[j]))
+		temp$met = temp[[met_list[i]]]
+		correction = 0.5 * min(temp$met[which(temp$met != 0)], na.rm = TRUE)
+		temp$met = log(temp$met + correction)
+		temp$met = scale(temp$met)
+		temp$outcome = temp[[outcome_list[j]]]
+		mini_mod = glm(outcome ~ met + age + sex + race + genotyping_array + PC1 + PC2 + PC3 + PC4 + PC5 + statin, data = temp, family = "binomial")
+		full_mod = glm(outcome ~ met + age + sex + race + genotyping_array + PC1 + PC2 + PC3 + PC4 + PC5 + statin + hypertension + diabetes + smoking_numeric, data = temp, family = "binomial")
+		mini_est = coef(summary(mini_mod))["met", "Estimate"]
+		full_est = coef(summary(full_mod))["met", "Estimate"]
+		mini_ste = coef(summary(mini_mod))["met", "Std. Error"]
+		full_ste = coef(summary(full_mod))["met", "Std. Error"]
+		mini_pval = coef(summary(mini_mod))["met", "Pr(>|z|)"]
+		full_pval = coef(summary(full_mod))["met", "Pr(>|z|)"]
+		res = rbind(res, c(outcome_list[j], met_list[i], mini_est, mini_ste, mini_pval, full_est, full_ste, full_pval))
+	}
+}
+res = as.data.frame(res)
+colnames(res) = c("outcome", "metabolite", "est_mini", "ste_mini", "pval_mini", "est_full", "ste_full", "pval_full")
+res = merge(raw, res, by = "metabolite")
+res$est_mini = as.numeric(as.character(res$est_mini))
+res$ste_mini = as.numeric(as.character(res$ste_mini))
+res$pval_mini = as.numeric(as.character(res$pval_mini))
+res$est_full = as.numeric(as.character(res$est_full))
+res$ste_full = as.numeric(as.character(res$ste_full))
+res$pval_full = as.numeric(as.character(res$pval_full))
+res$odds_mini = exp(res$est_mini)
+res$lower_odds_mini = exp(res$est_mini - 1.96 * res$ste_mini)
+res$upper_odds_mini = exp(res$est_mini + 1.96 * res$ste_mini)
+res$odds_full = exp(res$est_full)
+res$lower_odds_full = exp(res$est_full - 1.96 * res$ste_full)
+res$upper_odds_full = exp(res$est_full + 1.96 * res$ste_full)
+write.table(res, paste0(path, "res/regression_analysis_results_scale_log_20220120.csv"), col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+##################################################
+########## PLOT REGRESSION ANALYSIS OF OUTCOME - 20220217
+##################################################
+
+path = "C:/Users/jiwoo/Desktop/Genomic_Metabolomic_Project/"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(ggplot2)) {install.packages("ggplot2"); library(ggplot2)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+res = fread(paste0(path, "regression_analysis_results_scale_log_20220120.csv"), header = TRUE, stringsAsFactors = FALSE)
+
+outcome_list = c("cad_prev", "cad_incd", "pad_prev", "pad_incd", "vte_prev", "vte_incd")
+unit_list = c("fraction", "measure", "ratio")
+for(j in 1:length(outcome_list)) {
+	for (i in 1:length(unit_list)) {
+		print(paste0(outcome_list[j], ", ", unit_list[i]))
+		res_temp = res[which(res$unit == unit_list[i] & res$outcome == outcome_list[j]),]
+		ggplot() +
+			geom_point(data = res_temp, mapping = aes(x = reorder(metabolite, -odds_mini), y = odds_mini, color = ifelse(pval_mini < 0.05/length(unique(res$id)), "Yes", "No")), size = 1.5) +
+			coord_flip() +
+			geom_errorbar(data = res_temp, mapping = aes(x = reorder(metabolite, -odds_mini), ymin = lower_odds_mini, ymax = upper_odds_mini, color = ifelse(pval_mini < 0.05/length(unique(res$id)), "Yes", "No")), width = 0.1, size = 1.5) +
+			labs(title = paste0(outcome_list[j], ": ", unit_list[i], " (mini)"), x = "", y = "OR +/- 95% CI", color = "Significant?") + 
+			theme(axis.text.x = element_text(size = 15), axis.title.x = element_text(size = 15), axis.text.y = element_text(size = 7), axis.title.y = element_text(size = 15), legend.text = element_text(size = 15), legend.title = element_text(size = 15), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"))
+		ggsave(paste0(path, "figures/", outcome_list[j], "_", unit_list[i], "_mini.jpg"), device = "jpg", type = "cairo", height = 9, width = 10, family = "Arial")
+		ggplot() +
+			geom_point(data = res_temp, mapping = aes(x = reorder(metabolite, -odds_full), y = odds_full, color = ifelse(pval_full < 0.05/length(unique(res$id)), "Yes", "No")), size = 1.5) +
+			coord_flip() +
+			geom_errorbar(data = res_temp, mapping = aes(x = reorder(metabolite, -odds_full), ymin = lower_odds_full, ymax = upper_odds_full, color = ifelse(pval_full < 0.05/length(unique(res$id)), "Yes", "No")), width = 0.1, size = 1.5) +
+			labs(title = paste0(outcome_list[j], ": ", unit_list[i], " (full)"), x = "", y = "OR +/- 95% CI", color = "Significant?") + 
+			theme(axis.text.x = element_text(size = 15), axis.title.x = element_text(size = 15), axis.text.y = element_text(size = 7), axis.title.y = element_text(size = 15), legend.text = element_text(size = 15), legend.title = element_text(size = 15), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"))
+		ggsave(paste0(path, "figures/", outcome_list[j], "_", unit_list[i], "_full.jpg"), device = "jpg", type = "cairo", height = 9, width = 10, family = "Arial")
+	
+	}
+}
+
+# met_d_LDL_size - 20220118
+
+path = "C:/Users/jiwoo/Desktop/Genomic_Metabolomic_Project/"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(ggplot2)) {install.packages("ggplot2"); library(ggplot2)}
+
+phenos = fread(file = paste0(path, "phenos.txt"), header = TRUE, stringsAsFactors = FALSE)
+colnames(phenos) = c("id", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "sex", "age", 
+	"cad_all", "cad_prev", "cad_incd", "cad_fu", "pad_all", "pad_prev", "pad_incd", "pad_fu", "vte_all", "vte_prev", "vte_incd", "vte_fu", 
+	"genotyping_array", "diabetes", "hypertension", "smoking_numeric", "smoking_verbose", "race", 
+	"ldl", "hdl", "trig", "chol", "statin", "lipid_med", "ldl_adj", "chol_adj", "trig_adj", "hdl_adj")
+VLDL = fread(paste0(path, "23431.raw.eid"), header = TRUE, stringsAsFactors = FALSE)
+colnames(VLDL) = c("id", "met")
+LDL = fread(paste0(path, "23432.raw.eid"), header = TRUE, stringsAsFactors = FALSE)
+colnames(LDL) = c("id", "met")
+HDL = fread(paste0(path, "23433.raw.eid"), header = TRUE, stringsAsFactors = FALSE)
+colnames(HDL) = c("id", "met")
+
+
+correction = 0.5 * min(VLDL$met[which(VLDL$met != 0)], na.rm = TRUE)
+VLDL$met_adj = log(VLDL$met + correction)
+correction = 0.5 * min(LDL$met[which(LDL$met != 0)], na.rm = TRUE)
+LDL$met_adj = log(LDL$met + correction)
+correction = 0.5 * min(HDL$met[which(HDL$met != 0)], na.rm = TRUE)
+HDL$met_adj = log(HDL$met + correction)
+VLDL$met_adj = scale(VLDL$met_adj)
+LDL$met_adj = scale(LDL$met_adj)
+HDL$met_adj = scale(HDL$met_adj)
+
+VLDL$cad_prev = ifelse(VLDL$id %in% phenos$id[which(phenos$cad_prev == 1)], 1, 0)
+LDL$cad_prev = ifelse(LDL$id %in% phenos$id[which(phenos$cad_prev == 1)], 1, 0)
+HDL$cad_prev = ifelse(HDL$id %in% phenos$id[which(phenos$cad_prev == 1)], 1, 0)
+
+
+res = NULL
+mini_mod = glm(cad_prev ~ met_adj, data = VLDL)
+mini_est = coef(summary(mini_mod))["met_adj", "Estimate"]
+mini_ste = coef(summary(mini_mod))["met_adj", "Std. Error"]
+mini_pval = coef(summary(mini_mod))["met_adj", "Pr(>|t|)"]
+res = rbind(res, c("VLDL", mini_est, mini_ste, mini_pval))
+
+mini_mod = glm(cad_prev ~ met_adj, data = LDL)
+mini_est = coef(summary(mini_mod))["met_adj", "Estimate"]
+mini_ste = coef(summary(mini_mod))["met_adj", "Std. Error"]
+mini_pval = coef(summary(mini_mod))["met_adj", "Pr(>|t|)"]
+res = rbind(res, c("LDL", mini_est, mini_ste, mini_pval))
+
+mini_mod = glm(cad_prev ~ met_adj, data = HDL)
+mini_est = coef(summary(mini_mod))["met_adj", "Estimate"]
+mini_ste = coef(summary(mini_mod))["met_adj", "Std. Error"]
+mini_pval = coef(summary(mini_mod))["met_adj", "Pr(>|t|)"]
+res = rbind(res, c("HDL", mini_est, mini_ste, mini_pval))
+
+mini_mod = glm(cad_prev ~ met_adj, data = VLDL[-which(VLDL$met_adj < 2),])
+mini_est = coef(summary(mini_mod))["met_adj", "Estimate"]
+mini_ste = coef(summary(mini_mod))["met_adj", "Std. Error"]
+mini_pval = coef(summary(mini_mod))["met_adj", "Pr(>|t|)"]
+res = rbind(res, c("VLDL", mini_est, mini_ste, mini_pval))
+
+mini_mod = glm(cad_prev ~ met_adj, data = LDL)
+mini_est = coef(summary(mini_mod))["met_adj", "Estimate"]
+mini_ste = coef(summary(mini_mod))["met_adj", "Std. Error"]
+mini_pval = coef(summary(mini_mod))["met_adj", "Pr(>|t|)"]
+res = rbind(res, c("LDL", mini_est, mini_ste, mini_pval))
+
+mini_mod = glm(cad_prev ~ met_adj, data = HDL[-which(HDL$met_adj < 2),])
+mini_est = coef(summary(mini_mod))["met_adj", "Estimate"]
+mini_ste = coef(summary(mini_mod))["met_adj", "Std. Error"]
+mini_pval = coef(summary(mini_mod))["met_adj", "Pr(>|t|)"]
+res = rbind(res, c("HDL", mini_est, mini_ste, mini_pval))
+res = as.data.frame(res)
+colnames(res) = c("metabolite", "est_mini", "ste_mini", "pval_mini")
+
+res$est_mini = as.numeric(as.character(res$est_mini))
+res$ste_mini = as.numeric(as.character(res$ste_mini))
+res$pval_mini = as.numeric(as.character(res$pval_mini))
+res$est_mini_lower = res$est_mini - res$ste_mini
+res$est_mini_upper = res$est_mini + res$ste_mini
+
+
+sd(VLDL$met[which(VLDL$cad_prev == 0)])
+sd(LDL$met[which(LDL$cad_prev == 0)])
+sd(HDL$met[which(HDL$cad_prev == 0)])
+
+sd(VLDL$met[which(VLDL$cad_prev == 1)])
+sd(LDL$met[which(LDL$cad_prev == 1)])
+sd(HDL$met[which(HDL$cad_prev == 1)])
+
+sd(VLDL$met_adj[which(VLDL$cad_prev == 0)])
+sd(LDL$met_adj[which(LDL$cad_prev == 0)])
+sd(HDL$met_adj[which(HDL$cad_prev == 0)])
+
+sd(VLDL$met_adj[which(VLDL$cad_prev == 1)])
+sd(LDL$met_adj[which(LDL$cad_prev == 1)])
+sd(HDL$met_adj[which(HDL$cad_prev == 1)])
+
+
+boxplot(VLDL$met_adj[-which(HDL$met_adj < 2),], main = "VLDL")
+boxplot(LDL$met_adj, main = "LDL")
+boxplot(HDL$met_adj, main = "HDL")
+
+
+boxplot(met_adj~cad_prev, data = VLDL, main = "VLDL")
+LDL$met_adj = log(LDL$met + correction)
+
+HDL$met_adj = log(HDL$met + correction)
+
+par(mfrow = c(1,2))
+boxplot(met~cad_prev, data = LDL, main = "LDL")
+boxplot(met~cad_prev, data = HDL[-which(HDL$met_adj < 2),], main = "HDL")
+
+
+
+boxplot(met_adj~cad_prev, data = VLDL, main = "VLDL")
+boxplot(met_adj~cad_prev, data = LDL, main = "LDL")
+boxplot(met_adj~cad_prev, data = HDL, main = "HDL")
+
+
+hist(VLDL$met_adj, main = "VLDL", xlab = "", breaks = 1000)
+hist(LDL$met_adj, main = "LDL", xlab = "", breaks = 1000)
+hist(HDL$met_adj, main = "HDL", xlab = "", breaks = 1000)
+
+
+# met_d_LDL_size - 20220114
+
+total = fread(paste0(path, "total_20220111.csv"), header = TRUE, stringsAsFactors = FALSE)
+
+summary_sd = data.frame("metabolite" = colnames(total), "count" = sapply(total, function(x) sd(!is.na(x))))
+summary_sd = summary_sd[which(summary_sd$metabolite %in% met_list),]
+rownames(summary_sd) = 1:nrow(summary_sd)
+
+bad_met = "met_d_LDL_size"
+good_met = "met_d_HDL_size"
+
+my_met = good_met
+
+res = NULL
+temp = total
+temp$met = temp[[my_met]]
+outcome_list = "cad_prev"
+j = 1
+correction = 0.5 * min(temp$met[which(temp$met != 0)], na.rm = TRUE)
+temp$met = log(temp$met + correction)
+temp$outcome = temp[[outcome_list[j]]]
+mini_mod = glm(outcome ~ met + age + sex + race + genotyping_array + PC1 + PC2 + PC3 + PC4 + PC5 + statin, data = temp)
+full_mod = glm(outcome ~ met + age + sex + race + genotyping_array + PC1 + PC2 + PC3 + PC4 + PC5 + statin + hypertension + diabetes + smoking_numeric, data = temp)
+mini_est = coef(summary(mini_mod))["met", "Estimate"]
+full_est = coef(summary(full_mod))["met", "Estimate"]
+mini_ste = coef(summary(mini_mod))["met", "Std. Error"]
+full_ste = coef(summary(full_mod))["met", "Std. Error"]
+mini_pval = coef(summary(mini_mod))["met", "Pr(>|t|)"]
+full_pval = coef(summary(full_mod))["met", "Pr(>|t|)"]
+res = rbind(res, c(outcome_list[j], met_list[i], mini_est, mini_ste, mini_pval, full_est, full_ste, full_pval))
+
+fwrite(temp, paste0(path, "count_20220112.csv"), col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+count_all = fread(file = paste0(path, "count_20220112.csv"), header = TRUE, stringsAsFactors = FALSE)
+colnames(count_all) = c("metabolite", "value_count")
+count_temp = count_all[which(count_all$metabolite %in% raw$metabolite[which(raw$unit == "ratio")]),]
+table(count_temp$value_count)
+ggplot() +
+	geom_bar(data = count_temp, mapping = aes(x = metabolite, y = value_count), stat = "identity", width = 0.5) +
+	coord_flip() + 
+	#labs(title = "fraction", x = "", y = "Estimate", color = "Significant?") + 
+	theme(axis.text.x = element_text(size = 15), axis.title.x = element_text(size = 15), axis.text.y = element_text(size = 7), axis.title.y = element_text(size = 15), legend.text = element_text(size = 15), legend.title = element_text(size = 15), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"))
