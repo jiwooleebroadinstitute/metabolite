@@ -1,0 +1,2164 @@
+##################################################
+########## DOWNLOAD DATA
+##################################################
+
+cd /medpop/esp2/tgillila/jiwolee/
+
+# DOWNLOAD PLINK
+cp /medpop/esp2/zyu/software/plink2 .
+
+# DOWNLOAD UKBB METABOLITE DATA
+cp /medpop/esp2/projects/UK_Biobank/metabolome/v1/result/raw/* .
+
+# DOWNLOAD UKBB PHENOTYPE DATA
+cp /medpop/esp2/tgillila/vte_pad_cad_prs_metab/phenos.txt .
+
+# DOWNLOAD UKBB EXCLUSION AND INCLUSION DATA
+cp /medpop/esp/zyu/resources/UKBB_resource/w7089_20210201.csv .
+cp /medpop/esp2/btruong/Projects/metabolites/data/indv_with_metabolites.txt .
+cp /medpop/esp2/tgillila/ukbb/ukbb_3rd_degree_related.txt .
+cp /medpop/esp2/tgillila/ukbb/ukbb_ethnicities.txt .
+cp /medpop/esp2/tgillila/vte_pad_cad_prs_metab/mgb_prev_disease_status.txt .
+
+# DOWNLOAD SUMMARY STATISTICS
+cp /medpop/esp2/dklarin/MVP/VTE/META/anno/MVP.Transethnic.VTE.anno.tsv.gz .
+cp /medpop/esp2/dklarin/MVP/PAD/Meta/anno/MVP.PAD.Tranethnic.anno.csv .
+cp /medpop/esp2/projects/Published_GWAS_summary_stats/CARDIOGRAMplusC4D/cad.additive.Oct2015.pub/cad.add.160614.website.txt.gz .
+
+##################################################
+########## LOAD UKBB DATA
+##################################################
+
+ish -l h_rt=12:00:00 -l h_vmem=20g
+use R-4.1 
+use Anaconda3
+cd /medpop/esp2/jiwoolee/
+
+R
+
+path = "/medpop/esp2/jiwoolee/met_rep/"
+today = "20230222"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(TwoSampleMR)) {install.packages("TwoSampleMR"); library(TwoSampleMR)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD METABOLITE DATA
+raw = fread(file = paste0(path, "met/raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = convert_camel_case(raw$metabolite)
+raw$metabolite = str_replace(raw$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+met_list = raw$metabolite
+
+ao = as.data.frame(available_outcomes())
+ao_new = ao[which(grepl("met-d", ao$id)),]
+
+# LOAD GENETIC DATA
+cad_prs = fread(file = paste0(path, "prs/PRS-CS.CAD_phi1e-04.sumprs"), header = TRUE, stringsAsFactors = FALSE)
+colnames(cad_prs) = c("id", "cad_prs")
+pad_prs = fread(file = paste0(path, "prs/PRS-CS.PAD_phi1e-04.sumprs"), header = TRUE, stringsAsFactors = FALSE)
+colnames(pad_prs) = c("id", "pad_prs")
+vte_prs = fread(file = paste0(path, "prs/PRS-CS.VTE_phi1e-06.sumprs"), header = TRUE, stringsAsFactors = FALSE)
+colnames(vte_prs) = c("id", "vte_prs")
+all_prs = merge(cad_prs, pad_prs, by = "id")
+all_prs = merge(all_prs, vte_prs, by = "id")
+
+# LOAD EXCLUSION DATA
+id_consent = fread(file = paste0(path, "ids/w7089_20210201.csv"), header = FALSE, stringsAsFactors = FALSE)
+colnames(id_consent) = "id"
+id_related = fread(file = paste0(path, "ids/ukbb_3rd_degree_related.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(id_related) = c("id", "another_id")
+id_prs = fread(file = paste0(path, "ids/indv_with_metabolites.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(id_prs) = "id"
+
+# LOAD PHENOTYPE DATA 
+phenos = fread(file = paste0(path, "phenos.txt"), header = TRUE, stringsAsFactors = FALSE)
+colnames(phenos) = c("id", "PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10", "sex", "age", 
+	"cad_all", "cad_prev", "cad_incd", "cad_fu", "pad_all", "pad_prev", "pad_incd", "pad_fu", "vte_all", "vte_prev", "vte_incd", "vte_fu", 
+	"genotyping_array", "diabetes", "hypertension", "smoking_numeric", "smoking_verbose", "race", 
+	"ldl", "hdl", "trig", "chol", "statin", "lipid_med", "ldl_adj", "chol_adj", "trig_adj", "hdl_adj")
+id_phenos = phenos$id[which(phenos$cad_prev == 1 | phenos$pad_prev == 1 | phenos$vte_prev == 1)]
+dim(phenos) #502629
+phenos_new = phenos[-which(phenos$id %in% id_consent$id),]
+dim(phenos_new) # 502488
+phenos_new = phenos_new[-which(phenos_new$id %in% id_related$id),]
+dim(phenos_new) #467668
+#phenos_new = phenos_new[which(phenos_new$id %in% id_prs$id),]
+#dim(phenos_new) # 113611
+phenos_new = phenos_new[-which(phenos_new$id %in% id_phenos),]
+dim(phenos_new) # 106343
+phenos_new$sex = ifelse(phenos_new$sex == "Female", 1, 0)
+phenos_new$race = ifelse(phenos_new$race == "Black", 1,
+	ifelse(phenos_new$race == "Chinese", 2,
+		ifelse(phenos_new$race == "Other", 3,
+			ifelse(phenos_new$race == "South Asian", 4,
+				ifelse(phenos_new$race == "White", 5, NA)))))
+phenos_new$genotyping_array = ifelse(phenos_new$genotyping_array == "UKBB", 1,
+	ifelse(phenos_new$genotyping_array == "UKBL", 2, NA))
+phenos_new$smoking_numeric[which(phenos_new$smoking_numeric == -3)] = NA
+
+# COMBINE DATA
+phenos_new = merge(phenos_new, all_prs, by = "id")
+for(i in 1:nrow(raw)) {
+	met = fread(file = paste0(path, "met/", raw$id[i], ".eid"), header = TRUE, stringsAsFactors = FALSE)
+	met_name = met_list[i]
+	colnames(met) = c("id", met_name)
+	phenos_new = merge(phenos_new, met, by = "id", all.x = TRUE)
+	print(paste0(i, ": ", met_name))
+}
+fwrite(phenos_new, paste0(path, "ukbb_", today, ".csv"), col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+##################################################
+########## DO EPIDEMIOLOGY ANALYSIS
+##################################################
+
+ish -l h_rt=12:00:00 -l h_vmem=20g
+use R-4.1 
+use Anaconda3
+cd /medpop/esp2/jiwoolee/
+
+R
+
+path = "/medpop/esp2/jiwoolee/met_rep/"
+today = "20230222"
+biobank = "ukbb"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "met/raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = convert_camel_case(raw$metabolite)
+raw$metabolite = str_replace(raw$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+met_list = raw$metabolite
+total = fread(paste0(path, biobank, "_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE)
+temp = total
+temp$vte_all[which(temp$vte_all == NA | is.na(temp$vte_all))] <- 0
+temp$vte_incd[which(temp$vte_incd == NA | is.na(temp$vte_incd))] <- 0
+temp$vte_prev[which(temp$vte_prev == NA | is.na(temp$vte_prev))] <- 0
+for (i in 1:45) {
+  if (nrow(temp[which(is.na(temp[[i]]))]) > 0) {
+    print(colnames(temp)[i])
+  }
+}
+temp = select(temp, -c(smoking_numeric, ldl, hdl, trig, chol, ldl_adj, chol_adj, trig_adj, hdl_adj))
+temp = na.omit(temp)
+dim(temp) # 95402
+total_temp = total[which(total$id %in% temp$id),]
+
+temp = total
+outcome_list = c("cad_incd", "pad_incd", "vte_incd")
+res = NULL
+for(j in 1:length(outcome_list)) {
+	for(i in 1:length(met_list)) {
+		print(paste0(i, ": ", met_list[i], " for ", outcome_list[j]))
+		temp$met = temp[[met_list[i]]]
+		correction = 0.5 * min(temp$met[which(temp$met != 0)], na.rm = TRUE)
+		temp$met = log(temp$met + correction)
+		temp$met = scale(temp$met)
+		temp$out = temp[[outcome_list[j]]]
+		mod = glm(out ~ met + age + sex + genotyping_array + PC1 + PC2 + PC3 + PC4 + PC5 + statin, data = temp, family = "binomial")
+		est = coef(summary(mod))["met", "Estimate"]
+		ste = coef(summary(mod))["met", "Std. Error"]
+    z = coef(summary(mod))["met", "z value"]
+		pval = coef(summary(mod))["met", "Pr(>|z|)"]
+		res = rbind(res, c(outcome_list[j], met_list[i], est, ste, z, pval))
+	}
+}
+res = as.data.frame(res)
+colnames(res) = c("outcome", "metabolite", "est", "ste", "z", "pval")
+res = merge(raw, res, by = "metabolite")
+res$est = as.numeric(as.character(res$est))
+res$ste = as.numeric(as.character(res$ste))
+res$z = as.numeric(res$z)
+res$pval = as.numeric(as.character(res$pval))
+res$odds = exp(res$est)
+res$odds_lower = exp(res$est - 1.96 * res$ste)
+res$odds_upper = exp(res$est + 1.96 * res$ste)
+fwrite(res, paste0(path, "reg/", biobank, "_prs_reg_results_", today, ".csv"), col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+today = "20230222"
+total = fread(paste0(path, biobank, "_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE)
+
+res = NULL
+for (i in 1:length(met_list)) {
+  print(met_list[i])
+  for (j in 2:length(met_list)) {
+    temp = total[,"id"]
+    temp$pheno1 = total[[met_list[i]]]
+    temp$pheno2 = total[[met_list[j]]]
+    temp = temp[complete.cases(temp),]
+    est = cor.test(temp$pheno1, temp$pheno2)$estimate
+    pval = cor.test(temp$pheno1, temp$pheno2)$p.value
+    res = rbind(res, c(met_list[i], met_list[j], est, pval))
+  }
+}
+
+##################################################
+########## ANALYZE EPIDEMIOLOGY ANALYSIS
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+today = "20230222"
+biobank = "ukbb"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(ggplot2)) {install.packages("ggplot2"); library(ggplot2)}
+if(!require(ggrepel)) {install.packages("ggrepel"); library(ggplot2)}
+if(!require(grid)) {install.packages("grid"); library(grid)}
+if(!require(gridExtra)) {install.packages("gridExtra"); library(gridExtra)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = convert_camel_case(raw$metabolite)
+threshold = 41
+res = fread(paste0(path, "reg/ukbb_prs_reg_survival_sensitivity_results_20230222.csv"), header = TRUE, stringsAsFactors = FALSE)
+res$metabolite = str_replace(res$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+cad = res[which(res$outcome == "cad_incd"),c("metabolite","est","ste","pval")]
+pad = res[which(res$outcome == "pad_incd"),c("metabolite","est","ste","pval")]
+vte = res[which(res$outcome == "vte_incd"),c("metabolite","est","ste","pval")]
+colnames(cad) = c("metabolite","cad_est","cad_ste","cad_pval")
+colnames(pad) = c("metabolite","pad_est","pad_ste","pad_pval")
+colnames(vte) = c("metabolite","vte_est","vte_ste","vte_pval")
+
+total = merge(cad, pad, by = "metabolite")
+total = merge(total, vte, by = "metabolite")
+
+##################################################
+########## ANALYZE EPIDEMIOLOGY SENSITIVITY ANALYSIS
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+today = "20230222"
+biobank = "ukbb"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(ggplot2)) {install.packages("ggplot2"); library(ggplot2)}
+if(!require(ggrepel)) {install.packages("ggrepel"); library(ggplot2)}
+if(!require(grid)) {install.packages("grid"); library(grid)}
+if(!require(gridExtra)) {install.packages("gridExtra"); library(gridExtra)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = convert_camel_case(raw$metabolite)
+threshold = 41
+res = fread(paste0(path, "reg/", biobank, "_prs_reg_results_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE)
+res$metabolite = str_replace(res$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+cox = fread(paste0(path, "reg/", biobank, "_prs_reg_survival_sensitivity_results_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE)
+cox$metabolite = str_replace(cox$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+
+med = fread(paste0(path, "reg/", biobank, "_prs_reg_medication_sensitivity_results_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE)
+med$metabolite = str_replace(med$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+
+##################################################
+########## DO SURVIVAL SENSITIVITY ANALYSIS
+##################################################
+
+ish -l h_rt=12:00:00 -l h_vmem=20g
+use R-4.1 
+use Anaconda3
+cd /medpop/esp2/jiwoolee/
+
+R
+
+path = "/medpop/esp2/jiwoolee/met_rep/"
+today = "20230222"
+biobank = "ukbb"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(survival)) {install.packages("survival"); library(survival)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "met/raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = convert_camel_case(raw$metabolite)
+raw$metabolite = str_replace(raw$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+met_list = raw$metabolite
+total = fread(paste0(path, biobank, "_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE)
+temp = total
+temp$vte_all[which(temp$vte_all == NA | is.na(temp$vte_all))] <- 0
+temp$vte_incd[which(temp$vte_incd == NA | is.na(temp$vte_incd))] <- 0
+temp$vte_prev[which(temp$vte_prev == NA | is.na(temp$vte_prev))] <- 0
+for (i in 1:45) {
+  if (nrow(temp[which(is.na(temp[[i]]))]) > 0) {
+    print(colnames(temp)[i])
+  }
+}
+temp = select(temp, -c(smoking_numeric, ldl, hdl, trig, chol, ldl_adj, chol_adj, trig_adj, hdl_adj))
+temp = na.omit(temp)
+dim(temp) # 95402
+total_temp = total[which(total$id %in% temp$id),]
+
+temp = total
+outcome_list = c("cad_incd", "pad_incd", "vte_incd")
+time_list = c("cad_fu", "pad_fu", "vte_fu")
+res = NULL
+for(j in 1:length(outcome_list)) {
+  for(i in 1:length(met_list)) {
+    print(paste0(i, ": ", met_list[i], " for ", outcome_list[j]))
+    temp$met = temp[[met_list[i]]]
+    correction = 0.5 * min(temp$met[which(temp$met != 0)], na.rm = TRUE)
+    temp$met = log(temp$met + correction)
+    temp$met = scale(temp$met)
+    temp$out = temp[[outcome_list[j]]]
+    temp$time = temp[[time_list[j]]]
+    mod = coxph(Surv(time, out) ~ met + age + sex + genotyping_array + PC1 + PC2 + PC3 + PC4 + PC5 + statin, data = temp)
+    est = coef(summary(mod))["met", "coef"]
+    ste = coef(summary(mod))["met", "se(coef)"]
+    z = coef(summary(mod))["met", "z"]
+    pval = coef(summary(mod))["met", "Pr(>|z|)"]
+    res = rbind(res, c(outcome_list[j], met_list[i], est, ste, z, pval))
+  }
+}
+res = as.data.frame(res)
+colnames(res) = c("outcome", "metabolite", "est", "ste", "z", "pval")
+res = merge(raw, res, by = "metabolite")
+res$est = as.numeric(as.character(res$est))
+res$ste = as.numeric(as.character(res$ste))
+res$z = as.numeric(res$z)
+res$pval = as.numeric(as.character(res$pval))
+res$odds = exp(res$est)
+res$odds_lower = exp(res$est - 1.96 * res$ste)
+res$odds_upper = exp(res$est + 1.96 * res$ste)
+fwrite(res, paste0(path, "reg/", biobank, "_prs_reg_survival_sensitivity_results_", today, ".csv"), col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+##################################################
+########## DO MEDICATION SENSITIVITY ANALYSIS
+##################################################
+
+ish -l h_rt=12:00:00 -l h_vmem=50g
+use R-4.1 
+use Anaconda3
+cd /medpop/esp2/jiwoolee/
+
+R
+
+path = "/medpop/esp2/jiwoolee/met_rep/"
+today = "20230222"
+biobank = "ukbb"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(survival)) {install.packages("survival"); library(survival)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+dm1 = fread(file = paste0(path, "RxDmInsv0.csv"))
+dm1 = dm1[,c("identifier", "RxDmIns_0_Any")]
+dm2 = fread(file = paste0(path, "RxDmOrv0.csv"))
+dm2 = dm2[,c("identifier", "RxDmOr_0_Any")]
+dm3 = fread(file = paste0(path, "RxDmv0.csv"))
+dm3 = dm3[,c("identifier", "RxDm_0_Any")]
+dm = merge(dm1, dm2, by = "identifier")
+dm = merge(dm, dm3, by = "identifier")
+dm$glucose_lowering = ifelse(dm$RxDmIns_0_Any == 2 | dm$RxDmOr_0_Any == 2 | dm$RxDm_0_Any == 2, 1, 0)
+dm = dm[,c("identifier", "glucose_lowering")]
+colnames(dm) = c("id", "glucose_lowering")
+
+# LOAD DATA
+raw = fread(file = paste0(path, "met/raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = convert_camel_case(raw$metabolite)
+raw$metabolite = str_replace(raw$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+met_list = raw$metabolite
+total = fread(paste0(path, biobank, "_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE)
+temp = total
+temp$vte_all[which(temp$vte_all == NA | is.na(temp$vte_all))] <- 0
+temp$vte_incd[which(temp$vte_incd == NA | is.na(temp$vte_incd))] <- 0
+temp$vte_prev[which(temp$vte_prev == NA | is.na(temp$vte_prev))] <- 0
+for (i in 1:45) {
+  if (nrow(temp[which(is.na(temp[[i]]))]) > 0) {
+    print(colnames(temp)[i])
+  }
+}
+temp = select(temp, -c(smoking_numeric, ldl, hdl, trig, chol, ldl_adj, chol_adj, trig_adj, hdl_adj))
+temp = na.omit(temp)
+dim(temp) # 95402
+total_temp = total[which(total$id %in% temp$id),]
+
+meds = fread(file = paste0("/medpop/esp2/aschuerm/misc/others/jiwoo/base_ukb_file_20230615.txt"), header = TRUE, stringsAsFactors = FALSE)
+meds$antihtnmed = ifelse(meds$antihtnbase == 1 | meds$antihtnbase2 == 1, 1, 0)
+meds = meds[,c("id", "cholmed", "antihtnmed")]
+colnames(meds) = c("id", "lipid_lowering", "anti_hypertensive")
+total = merge(total, meds, by = "id")
+total = merge(total, dm, by = "id")
+
+temp = total
+outcome_list = c("cad_incd", "pad_incd", "vte_incd")
+res = NULL
+for(j in 1:length(outcome_list)) {
+  for(i in 1:length(met_list)) {
+    print(paste0(i, ": ", met_list[i], " for ", outcome_list[j]))
+    temp$met = temp[[met_list[i]]]
+    correction = 0.5 * min(temp$met[which(temp$met != 0)], na.rm = TRUE)
+    temp$met = log(temp$met + correction)
+    temp$met = scale(temp$met)
+    temp$out = temp[[outcome_list[j]]]
+    mod = glm(out ~ met + age + sex + genotyping_array + PC1 + PC2 + PC3 + PC4 + PC5 + statin + lipid_lowering + anti_hypertensive + glucose_lowering, data = temp, family = "binomial")
+    est = coef(summary(mod))["met", "Estimate"]
+    ste = coef(summary(mod))["met", "Std. Error"]
+    z = coef(summary(mod))["met", "z value"]
+    pval = coef(summary(mod))["met", "Pr(>|z|)"]
+    res = rbind(res, c(outcome_list[j], met_list[i], est, ste, z, pval))
+  }
+}
+res = as.data.frame(res)
+colnames(res) = c("outcome", "metabolite", "est", "ste", "z", "pval")
+res = merge(raw, res, by = "metabolite")
+res$est = as.numeric(as.character(res$est))
+res$ste = as.numeric(as.character(res$ste))
+res$z = as.numeric(res$z)
+res$pval = as.numeric(as.character(res$pval))
+res$odds = exp(res$est)
+res$odds_lower = exp(res$est - 1.96 * res$ste)
+res$odds_upper = exp(res$est + 1.96 * res$ste)
+fwrite(res, paste0(path, "reg/", biobank, "_prs_reg_medication_sensitivity_results_", today, ".csv"), col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+##################################################
+########## MAKE MENDELIAN RANDOMIZATION DATA FRAME
+##################################################
+
+ish -l h_rt=24:00:00 -l h_vmem=48g
+use R-4.1 
+use Anaconda3
+cd /medpop/esp2/jiwoolee/
+
+R
+
+path = "/medpop/esp2/jiwoolee/met_rep/"
+today = "20231017"
+biobank = "ukbb"
+
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(TwoSampleMR)) {install.packages("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(MendelianRandomization)) {install.packages("MendelianRandomization"); library(MendelianRandomization)}
+if(!require(MRPRESSO)) {install.packages("MRPRESSO"); library(MRPRESSO)}
+if(!require(MRInstruments)) {install.packages("MRInstruments"); library(MRInstruments)}
+if(!require(ieugwasr)) {install.packages("ieugwasr"); library(ieugwasr)}
+if(!require(genetics.binaRies)) {install.packages("genetics.binaRies"); library(genetics.binaRies)}
+if(!require(BiocManager)) {install.packages("BiocManager"); library(BiocManager)}
+if(!require(gwasvcf)) {install.packages("gwasvcf"); library(gwasvcf)}
+if(!require(VariantAnnotation)) {install.packages("VariantAnnotation"); library(VariantAnnotation)}
+if(!require(gwasglue)) {install.packages("gwasglue"); library(gwasglue)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+setDTthreads(0)
+
+#cad_sumstat = fread(file = paste0(path, "gwas/cad.add.160614.website.txt"), header = TRUE, stringsAsFactors = FALSE)
+#cad_clean = cad_sumstat[,c("markername", "beta", "se_dgc", "effect_allele", "noneffect_allele", "effect_allele_freq", "p_dgc")]
+#colnames(cad_clean) = c("SNP", "beta", "se", "effect_allele", "other_allele", "eaf", "pval")
+#fwrite(cad_clean, paste0(path, "gwas/ukbb_cad_sumstat_clean.txt.gz"), sep = " ")
+#rm(cad_sumstat)
+#pad_sumstat = fread(file = paste0(path, "gwas/MVP.PAD.Tranethnic.anno.csv"), header = TRUE, stringsAsFactors = FALSE)
+#pad_sumstat = pad_sumstat[,c("ID", "Effect", "StdErr", "Allele1", "Allele2", "Freq1", "P.value")]
+#colnames(pad_sumstat) = c("SNP", "beta", "se", "effect_allele", "other_allele", "eaf", "pval")
+#fwrite(pad_sumstat, paste0(path, "gwas/ukbb_pad_sumstat_clean.txt.gz"), sep = " ")
+#rm(pad_sumstat)
+#vte_sumstat = fread(file = paste0(path, "gwas/MVP.Transethnic.VTE.anno.tsv"), header = TRUE, stringsAsFactors = FALSE)
+#vte_sumstat = vte_sumstat[,c("ID", "Effect", "StdErr", "Allele1", "Allele2", "Freq1", "P.value")]
+#colnames(vte_sumstat) = c("SNP", "beta", "se", "effect_allele", "other_allele", "eaf", "pval")
+#fwrite(vte_sumstat, paste0(path, "gwas/ukbb_vte_sumstat_clean.txt.gz"), sep = " ")
+#rm(vte_sumstat)
+
+#cad = fread(file = paste0(path, "gwas/", biobank, "_cad_sumstat_clean.csv"))
+#pad = fread(file = paste0(path, "gwas/", biobank, "_pad_sumstat_clean.csv"))
+#vte = fread(file = paste0(path, "gwas/", biobank, "_vte_sumstat_clean.csv"))
+#outcome_snp_list = unique(c(cad$SNP[which(cad$pval < 5e-8)], pad$SNP[which(pad$pval < 5e-8)], vte$SNP[which(vte$pval < 5e-8)]))
+#fwrite(list(outcome_snp_list), paste0(path, "outcome_snp_list.txt"))
+outcome_snp_list = fread(paste0(path, "outcome_snp_list.txt"), header = FALSE)$V1
+
+# LOAD DATA
+raw = fread(file = paste0(path, "met/raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = str_replace(raw$metabolite, "met-d-IDL_IDL", "met-d-IDL")
+met_list = raw$metabolite
+
+#gwasvcf::set_bcftools()
+res = NULL
+for (i in 1:length(met_list)) {
+  vcf <- readVcf(paste0(path, "gwas/", met_list[i], ".vcf.gz"), "hg19")
+  temp = vcf_to_granges(vcf) %>% as_tibble() %>% as.data.frame(temp)
+  temp$P = 10^-temp$LP
+  temp = temp[which(temp$ID %in% outcome_snp_list | temp$P < 5e-8),]
+  fwrite(temp, paste0(path, "gwas/", met_list[i], ".csv"))
+  print(paste0(met_list[i], " had ", nrow(temp), " SNPs!"))
+  res = rbind(res, c(met_list[i], nrow(temp)))
+  fwrite(as.data.frame(res), paste0(path, "gwas/number_of_snp.txt"))
+}
+
+##################################################
+########## DO MENDELIAN RANDOMIZATION
+##################################################
+
+ish -l h_rt=24:00:00 -l h_vmem=48g
+use R-4.1 
+use Anaconda3
+cd /medpop/esp2/jiwoolee/
+
+R
+
+path = "/medpop/esp2/jiwoolee/met_rep/"
+today = "20231103"
+biobank = "ukbb"
+
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(TwoSampleMR)) {install.packages("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(MendelianRandomization)) {install.packages("MendelianRandomization"); library(MendelianRandomization)}
+if(!require(MRPRESSO)) {install.packages("MRPRESSO"); library(MRPRESSO)}
+if(!require(MRInstruments)) {install.packages("MRInstruments"); library(MRInstruments)}
+if(!require(ieugwasr)) {install.packages("ieugwasr"); library(ieugwasr)}
+if(!require(genetics.binaRies)) {install.packages("genetics.binaRies"); library(genetics.binaRies)}
+if(!require(BiocManager)) {install.packages("BiocManager"); library(BiocManager)}
+if(!require(gwasvcf)) {install.packages("gwasvcf"); library(gwasvcf)}
+if(!require(VariantAnnotation)) {install.packages("VariantAnnotation"); library(VariantAnnotation)}
+if(!require(gwasglue)) {install.packages("gwasglue"); library(gwasglue)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+setDTthreads(0)
+
+# LOAD DATA
+raw = fread(file = paste0(path, "met/raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = str_replace(raw$metabolite, "met-d-IDL_IDL", "met-d-IDL")
+met_list = raw$metabolite
+
+do_mr = function(biobank, outcome, direction) {
+	dat = fread(file = paste0(path, "gwas/", biobank, "_", outcome, "_sumstat_clean.csv"))
+	if (direction == "met_to_out") {
+		outcome_dat = format_data(dat, type = "outcome")	
+    if (outcome == "cad") {
+      outcome_dat$samplesize.outcome = 184305
+    } else if (outcome == "pad") {
+      outcome_dat$samplesize.outcome = 394408
+    } else if (outcome == "vte") {
+      outcome_dat$samplesize.outcome = 184967
+    }
+	} else if (direction == "out_to_met") {
+		exposure_dat = format_data(dat, type = "exposure")
+    if (outcome == "cad") {
+      exposure_dat$samplesize.exposure = 184305
+    } else if (outcome == "pad") {
+      exposure_dat$samplesize.exposure = 394408
+    } else if (outcome == "vte") {
+      exposure_dat$samplesize.exposure = 184967
+    }
+	}
+	mr_res = NULL
+  mr_heterogeneity = NULL
+  mr_pleiotropy = NULL
+  mr_presso = NULL
+  for (i in 1:length(met_list)) {
+    dat = fread(paste0(path, "gwas/", met_list[i], ".csv"))
+    if (direction == "met_to_out") {
+      #exposure_dat = extract_instruments(met_list[i])
+      exposure_dat = format_data(dat, type = "exposure", phenotype_col = "id", snp_col = "ID", beta_col = "ES", se_col = "SE", eaf_col = "AF", effect_allele_col = "ALT", other_allele_col = "REF", pval_col = "P")
+      exposure_dat$samplesize.exposure = 118461
+
+		} else if (direction == "out_to_met") {
+			#outcome_dat = extract_outcome_data(snps = exposure_dat$SNP, outcomes = met_list[i])
+      outcome_dat = format_data(dat, type = "outcome", phenotype_col = "id", snp_col = "ID", beta_col = "ES", se_col = "SE", eaf_col = "AF", effect_allele_col = "ALT", other_allele_col = "REF", pval_col = "P")
+      outcome_dat$samplesize.outcome = 118461
+		}
+    exposure_dat = exposure_dat[which(exposure_dat$pval.exposure < 5e-8),]
+		dat = harmonise_data(exposure_dat, outcome_dat)
+    clump <- ld_clump(dplyr::tibble(rsid=dat$SNP, pval=dat$pval.exposure, id=dat$id.exposure), plink_bin = genetics.binaRies::get_plink_binary(), clump_kb=10000, clump_r2 = 0.1, bfile = "/medpop/esp2/aschuerm/tools/g1000_eur")
+		dat = dat[dat$SNP %in% clump$rsid,]
+    dat = steiger_filtering(dat)
+    dat = dat[which(dat$steiger_dir == TRUE & dat$steiger_pval < 0.05),]
+		res = mr(dat) 
+    heterogeneity = mr_heterogeneity(dat)
+    pleiotropy = mr_pleiotropy_test(dat)
+    presso = mr_presso(BetaOutcome = "beta.outcome", BetaExposure = "beta.exposure", SdOutcome = "se.outcome", SdExposure = "se.exposure", OUTLIERtest = TRUE, DISTORTIONtest = TRUE, data = dat, NbDistribution = 1000,  SignifThreshold = 0.05)$'Main MR results'
+		mr_res = rbind(mr_res, res)
+    mr_heterogeneity = rbind(mr_heterogeneity, heterogeneity)
+    mr_pleiotropy = rbind(mr_pleiotropy, pleiotropy)
+    mr_presso = rbind(mr_presso, presso)
+
+    mr_res = as.data.frame(mr_res)
+    mr_heterogeneity = as.data.frame(mr_heterogeneity)
+    mr_pleiotropy = as.data.frame(mr_pleiotropy)
+    mr_presso = as.data.frame(mr_presso)
+
+    fwrite(mr_res, paste0(path, "mr/", biobank, "_", outcome, "_", direction, "_mr_main_", today, ".csv")) 
+    fwrite(mr_heterogeneity, paste0(path, "mr/", biobank, "_", outcome, "_", direction, "_mr_heterogeneity_", today, ".csv")) 
+    fwrite(mr_pleiotropy, paste0(path, "mr/", biobank, "_", outcome, "_", direction, "_mr_pleiotropy_", today, ".csv")) 
+    fwrite(mr_presso, paste0(path, "mr/", biobank, "_", outcome, "_", direction, "_mr_presso_", today, ".csv")) 
+	}
+}
+
+ukbb_cad_met_to_out = do_mr("ukbb", "cad", "met_to_out")
+ukbb_cad_out_to_met = do_mr("ukbb", "cad", "out_to_met")
+ukbb_pad_met_to_out = do_mr("ukbb", "pad", "met_to_out")
+ukbb_pad_out_to_met = do_mr("ukbb", "pad", "out_to_met")
+ukbb_vte_met_to_out = do_mr("ukbb", "vte", "met_to_out") 
+ukbb_vte_out_to_met = do_mr("ukbb", "vte", "out_to_met")
+
+##################################################
+########## CALCULATE F-STATISTIC
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(TwoSampleMR)) {install_github("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(ggplot2)) {install_github("ggplot2"); library(ggplot2)}
+
+ao <- available_outcomes()
+ao_df <- as.data.frame(ao)
+
+phenos = ao_df[grepl("met-d", ao_df$id),]
+met_list = phenos$id
+
+f_res = NULL
+for (i in 1:length(met_list)) {
+  print(paste0(i, ": ", met_list[i]))
+  exposure_dat = extract_instruments(outcomes = met_list[i])
+  n = as.numeric(phenos[i, "sample_size"])
+  k = nrow(exposure_dat)
+  
+  exposure_dat$maf = ifelse(exposure_dat$eaf.exposure < 0.50, exposure_dat$eaf.exposure, 1 - exposure_dat$eaf.exposure)
+  exposure_dat$rsq = 2*exposure_dat$beta.exposure^2*exposure_dat$maf*(1-exposure_dat$maf)/(2*exposure_dat$beta.exposure^2*exposure_dat$maf*(1-exposure_dat$maf) + exposure_dat$se.exposure^2*2*n*exposure_dat$maf*(1-exposure_dat$maf))
+
+  rsq = sum(exposure_dat$rsq, na.rm = TRUE)
+  f = ((n - k - 1) / k) * (rsq/(1-rsq))
+  res = c(phenos[i, "id"], n, k, rsq, f, paste0(exposure_dat$SNP, collapse = ","))
+  f_res = rbind(f_res, res)
+}
+f_res = as.data.frame(f_res)
+colnames(f_res) = c("id", "n", "k", "rsq", "f", "snps")
+f_temp = f_res[,c("id", "k", "rsq", "f", "snps")]
+colnames(f_temp) = c("id", "nsnp_mrs", "rsq", "f_statistic", "snps")
+f_temp$id = as.character(f_temp$id)
+phenos_new = merge(phenos, f_temp, by = "id")
+fwrite(phenos_new, paste0(path, "/raw_jwl_new.csv"), col.names = TRUE, row.names = FALSE, quote = FALSE)
+write.xlsx(phenos_new, paste0(path, "/raw_jwl_new.xlsx"))
+
+##################################################
+########## DO MULTIVARIABLE MENDELIAN RANDOMIZATION
+##################################################
+
+ish -l h_rt=12:00:00 -l h_vmem=20g
+use R-4.1 
+use Anaconda3
+cd /medpop/esp2/jiwoolee/
+
+R
+
+path = "/medpop/esp2/jiwoolee/met_rep/"
+today = "20230222"
+biobank = "ukbb"
+
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(TwoSampleMR)) {install.packages("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(qqman)) {install.packages("qqman"); library(qqman)}
+library(ieugwasr)
+library(genetics.binaRies)
+library(MendelianRandomization)
+library(MRPRESSO)
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+setDTthreads(0)
+
+# LOAD DATA
+raw = fread(file = paste0(path, "met/raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = str_replace(raw$metabolite, "met-d-IDL_IDL", "met-d-IDL")
+met_list = raw$metabolite
+threshold = 41
+
+my_mv_extract_exposures_local <- function(filenames_exposure, sep = " ", phenotype_col = "Phenotype", snp_col = "SNP", beta_col = "beta", se_col = "se", eaf_col = "eaf", effect_allele_col = "effect_allele", other_allele_col = "other_allele", pval_col = "pval", units_col = "units", ncase_col = "ncase", ncontrol_col = "ncontrol", samplesize_col = "samplesize", gene_col = "gene", id_col = "id", min_pval = 1e-200, log_pval = FALSE, pval_threshold=5e-8, clump_r2=0.001, clump_kb=10000, harmonise_strictness=2)
+{
+  message("WARNING: Experimental function")
+  l_full <- list()
+  l_inst <- list()
+  for(i in 1:length(filenames_exposure))
+  {
+    l_full[[i]] <- read_outcome_data(filenames_exposure[i], 
+      sep = sep,
+      phenotype_col = phenotype_col,
+      snp_col = snp_col,
+      beta_col = beta_col,
+      se_col = se_col,
+      eaf_col = eaf_col,
+      effect_allele_col = effect_allele_col,
+      other_allele_col = other_allele_col,
+      pval_col = pval_col#,
+      #units_col = units_col,
+      #ncase_col = ncase_col,
+      #ncontrol_col = ncontrol_col,
+      #samplesize_col = samplesize_col,
+      #gene_col = gene_col,
+      #id_col = id_col,
+      #min_pval = min_pval,
+      #log_pval = log_pval
+    )
+    l_inst[[i]] <- subset(l_full[[i]], pval.outcome < pval_threshold)
+    l_inst[[i]] <- convert_outcome_to_exposure(l_inst[[i]])
+    l_inst[[i]] <- subset(l_inst[[i]], pval.exposure < pval_threshold)
+    #l_inst[[i]] <- clump_data(l_inst[[i]], clump_p1=pval_threshold, clump_r2=clump_r2, clump_kb=clump_kb)
+
+    l_inst[[i]] <- ld_clump(dplyr::tibble(rsid=l_inst[[i]]$SNP, pval=l_inst[[i]]$pval.exposure, id=l_inst[[i]]$id.exposure), plink_bin = genetics.binaRies::get_plink_binary(), clump_kb=clump_kb, clump_r2 = clump_r2, bfile = "/medpop/esp2/aschuerm/tools/g1000_eur")
+  
+  }
+
+  exposure_dat <- dplyr::bind_rows(l_inst)
+  colnames(exposure_dat) = c("SNP", "pval.exposure", "id.exposure")
+  id_exposure <- unique(exposure_dat$id.exposure)
+  temp <- exposure_dat
+  temp$id.exposure <- 1
+  temp <- temp[order(temp$pval.exposure, decreasing=FALSE), ]
+  temp <- subset(temp, !duplicated(SNP))
+  #temp <- clump_data(temp, clump_p1=pval_threshold, clump_r2=clump_r2, clump_kb=clump_kb)
+  temp <- ld_clump(dplyr::tibble(rsid=temp$SNP, pval=temp$pval.exposure, id=temp$id.exposure), plink_bin = genetics.binaRies::get_plink_binary(), clump_kb=clump_kb, clump_r2 = clump_r2, bfile = "/medpop/esp2/aschuerm/tools/g1000_eur")
+  colnames(temp) = c("SNP", "pval.exposure", "id.exposure")
+  exposure_dat <- subset(exposure_dat, SNP %in% temp$SNP)
+
+  d1 <- lapply(l_full, function(x) {
+    subset(x, SNP %in% exposure_dat$SNP)
+    }) %>% dplyr::bind_rows()
+
+  stopifnot(length(unique(d1$id)) == length(unique(id_exposure)))
+  d1 <- subset(d1, mr_keep.outcome)
+  d2 <- subset(d1, id.outcome != id_exposure[1])
+  d1 <- convert_outcome_to_exposure(subset(d1, id.outcome == id_exposure[1]))
+
+  # Harmonise against the first id
+  d <- harmonise_data(d1, d2, action=harmonise_strictness)
+
+  # Only keep SNPs that are present in all
+  tab <- table(d$SNP)
+  keepsnps <- names(tab)[tab == length(id_exposure)-1]
+  d <- subset(d, SNP %in% keepsnps)
+  
+  # Reshape exposures
+  dh1 <- subset(d, id.outcome == id.outcome[1], select=c(SNP, exposure, id.exposure, effect_allele.exposure, other_allele.exposure, eaf.exposure, beta.exposure, se.exposure, pval.exposure))
+  dh2 <- subset(d, select=c(SNP, outcome, id.outcome, effect_allele.outcome, other_allele.outcome, eaf.outcome, beta.outcome, se.outcome, pval.outcome))
+  names(dh2) <- gsub("outcome", "exposure", names(dh2))
+  dh <- rbind(dh1, dh2)
+  return(dh)
+}
+
+my_mv_multiple <- function(mvdat, intercept=FALSE, instrument_specific=FALSE, pval_threshold=5e-8, plots=FALSE)
+{
+  # This is a matrix of 
+  beta.outcome <- mvdat$outcome_beta
+  beta.exposure <- mvdat$exposure_beta
+  pval.exposure <- mvdat$exposure_pval
+  w <- 1/mvdat$outcome_se^2
+
+  nexp <- ncol(beta.exposure)
+  effs <- array(1:nexp)
+  se <- array(1:nexp)
+  pval <- array(1:nexp)
+  nsnp <- array(1:nexp)
+  # marginal_outcome <- matrix(0, nrow(beta.exposure), ncol(beta.exposure))
+  p <- list()
+  nom <- colnames(beta.exposure)
+  nom2 <- mvdat$expname$exposure[match(nom, mvdat$expname$id.exposure)]
+  for (i in 1:nexp)
+  {
+    # For this exposure, only keep SNPs that meet some p-value threshold
+    index <- pval.exposure[,i] < pval_threshold
+
+    # # Get outcome effects adjusted for all effects on all other exposures
+    # marginal_outcome[,i] <- lm(beta.outcome ~ beta.exposure[, -c(i)])$res
+
+    # Get the effect of the exposure on the residuals of the outcome
+    if(!intercept)
+    {
+      if(instrument_specific)
+      {
+        mod <- summary(stats::lm(beta.outcome[index] ~ 0 + beta.exposure[index, drop=FALSE], weights=w[index]))
+      } else {
+        mod <- summary(stats::lm(beta.outcome ~ 0 + beta.exposure, weights=w))
+      }
+    } else {
+      if(instrument_specific)
+      {
+        mod <- summary(stats::lm(beta.outcome[index] ~ beta.exposure[index, drop=FALSE], weights=w[index]))
+      } else {
+        mod <- summary(stats::lm(beta.outcome ~ beta.exposure, weights=w))
+      }
+    }
+
+    if(instrument_specific & sum(index) <= (nexp + as.numeric(intercept)))
+    {
+      effs[i] <- NA
+      se[i] <- NA
+    } else {
+      effs[i] <- mod$coef[as.numeric(intercept) + i, 1]
+      se[i] <- mod$coef[as.numeric(intercept) + i, 2]
+    }
+    pval[i] <- 2 * stats::pnorm(abs(effs[i])/se[i], lower.tail = FALSE)
+    nsnp[i] <- sum(index)
+
+    # Make scatter plot
+    d <- data.frame(outcome=beta.outcome, exposure=beta.exposure[,i])
+    flip <- sign(d$exposure) == -1
+    d$outcome[flip] <- d$outcome[flip] * -1
+    d$exposure <- abs(d$exposure)
+    if(plots)
+    {
+      p[[i]] <- ggplot2::ggplot(d[index,], ggplot2::aes(x=exposure, y=outcome)) +
+      ggplot2::geom_point() +
+      ggplot2::geom_abline(intercept=0, slope=effs[i]) +
+      # ggplot2::stat_smooth(method="lm") +
+      ggplot2::labs(x=paste0("SNP effect on ", nom2[i]), y="Marginal SNP effect on outcome")
+    }
+  }
+  result <- data.frame(id.exposure = nom, id.outcome = mvdat$outname$id.outcome, outcome=mvdat$outname$outcome, nsnp = nsnp, b = effs, se = se, pval = pval, stringsAsFactors = FALSE)
+  result <- merge(mvdat$expname, result)
+  out <- list(
+    result=result
+  )
+  if(plots)
+    out$plots=p
+
+  return(out)
+}
+
+do_mvmr = function(biobank, outcome, direction) {
+  met_list = fread(file = paste0(path, outcome, "_", direction, "_list.txt"), header = FALSE)$V1
+  file_list = paste0(path, "gwas/", met_list, ".csv")  
+  exposure_dat = fread(paste0(path, "mr/", biobank, "_", outcome, "_mvmr_exposure_20231017.csv"))
+  outcome_dat = fread(paste0(path, "mr/", biobank, "_", outcome, "_mvmr_outcome_20231017.csv"))
+  dat = mv_harmonise_data(exposure_dat, outcome_dat)
+  mr_res = mv_multiple(dat) 
+  mr_res = as.data.frame(mr_res)
+  colnames(mr_res) = c("id.exposure", "exposure", "id.outcome", "outcome", "nsnp", "b", "se", "pval")
+  mr_res$b = as.numeric(mr_res$b)
+  mr_res$se = as.numeric(mr_res$se)
+  mr_res$pval = as.numeric(mr_res$pval)
+  fwrite(mr_res, paste0(path, "mr/", biobank, "_", outcome, "_mvmr_results_20231017.csv"))
+}
+
+do_mvmr("ukbb", "cad", "for")
+do_mvmr("ukbb", "pad", "for")
+do_mvmr("ukbb", "vte", "for") 
+#do_mvmr("ukbb", "cad", "rev")
+#do_mvmr("ukbb", "pad", "rev")
+#do_mvmr("ukbb", "vte", "rev") 
+
+exposure_list = c(
+  "met-d-VLDL_L", "met-d-VLDL_C", "met-d-VLDL_TG", "met-d-VLDL_size",
+  "met-d-LDL_L", "met-d-LDL_C", "met-d-LDL_TG", "met-d-LDL_size",
+  "met-d-HDL_L", "met-d-HDL_C", "met-d-HDL_TG", "met-d-HDL_size",
+  "met-d-HDL_L", "met-d-LDL_L", "met-d-VLDL_L",
+  "met-d-HDL_C", "met-d-LDL_C", "met-d-VLDL_C",
+  "met-d-HDL_TG", "met-d-LDL_TG", "met-d-VLDL_TG",
+  "met-d-HDL_size", "met-d-LDL_size", "met-d-VLDL_size"
+  )
+
+name_list = c("met-d-VLDL", "met-d-LDL", "met-d-HDL", "_L", "_C", "_TG", "_size")
+
+label_list = c("VLDL", "LDL", "HDL", "lipid", "cholesterol", "triglyceride", "size")
+
+outcome_list = c("cad", "pad", "vte")
+
+biobank = "ukbb"
+mr_res = NULL
+for (i in 1:length(outcome_list)) {
+  outcome_dat = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_mvmr_outcome_20231017.csv"))
+  for (j in 1:length(name_list)) {
+    print(paste0("DOING ", label_list[j]))
+    my_list = unique(exposure_list[grepl(name_list[j], exposure_list)])
+    if (i == 1) {
+      exposure_dat = mv_extract_exposures(my_list)
+      fwrite(exposure_dat, paste0(path, "mr/", biobank, "_", label_list[j], "_mvmr_exposure_20231017.csv"))
+    }
+    exposure_dat = fread(paste0(path, "mr/", biobank, "_", label_list[j], "_mvmr_exposure_20231017.csv"))
+    dat = mv_harmonise_data(exposure_dat, outcome_dat)
+    res = mv_multiple(dat) 
+    res = as.data.frame(res)
+    colnames(res) = c("id.exposure", "exposure", "id.outcome", "outcome", "nsnp", "b", "se", "pval")
+    res$b = as.numeric(res$b)
+    res$se = as.numeric(res$se)
+    res$pval = as.numeric(res$pval)
+    res$analysis_exposure = label_list[j]
+    res$analysis_outcome = outcome_list[i]
+    mr_res = rbind(mr_res, res)
+    fwrite(mr_res, paste0(path, "mr/", biobank, "_mvmr_mini_results_20231017.csv"))
+  }
+}
+
+##################################################
+########## ANALYZE MENDELIAN RANDOMIZATION 
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+today = "20231017"
+biobank = "ukbb"
+threshold = 41
+
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(TwoSampleMR)) {install_github("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(ggplot2)) {install_github("ggplot2"); library(ggplot2)}
+if(!require(tidyverse)) {install_github("tidyverse"); library(tidyverse)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = str_replace(raw$metabolite, "met-d-IDL_IDL", "met-d-IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+reg = fread(paste0(path, "reg/", biobank, "_prs_reg_survival_sensitivity_results_20230222.csv"))
+
+outcome = "cad"
+reg_temp = reg[which(reg$outcome == "cad_incd" & reg$pval < 0.05/threshold),]
+
+reg_temp = reg_temp[,c("metabolite", "est")]
+colnames(reg_temp) = c("metabolite", "reg_est")
+reg_temp$metabolite = gsub("met_d_", "met-d-", reg_temp$metabolite)
+met_to_out = fread(paste0(path, "mr/", biobank, "_", outcome, "_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+out_to_met = fread(paste0(path, "mr/", biobank, "_", outcome, "_out_to_met_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+presso_for = fread(paste0(path, "mr/", biobank, "_", outcome, "_met_to_out_mr_presso_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+presso_rev = fread(paste0(path, "mr/", biobank, "_", outcome, "_out_to_met_mr_presso_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+pleiotropy_for = fread(paste0(path, "mr/", biobank, "_", outcome, "_met_to_out_mr_pleiotropy_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+pleiotropy_rev = fread(paste0(path, "mr/", biobank, "_", outcome, "_out_to_met_mr_pleiotropy_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+heterogeneity_for = fread(paste0(path, "mr/", biobank, "_", outcome, "_met_to_out_mr_heterogeneity_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+heterogeneity_rev = fread(paste0(path, "mr/", biobank, "_", outcome, "_out_to_met_mr_heterogeneity_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out$direction = "met_to_out"
+out_to_met$direction = "out_to_met"
+met_to_out$metabolite = met_to_out$exposure
+out_to_met$metabolite = out_to_met$outcome
+total = rbind(met_to_out, out_to_met)
+temp = merge(total, reg_temp, by = "metabolite")
+print(paste0("Number of metabolites that had significant regression p-values: ", length(unique(temp$metabolite))))
+temp = temp[which(temp$metabolite %in% temp$metabolite[which((temp$b < 0 & temp$reg_est < 0 & temp$method == "Inverse variance weighted") | 
+                                                            (temp$b > 0 & temp$reg_est > 0 & temp$method == "Inverse variance weighted"))]),]
+print(paste0("Number of metabolites that had same direction of effect between regression and Mendelian randomization by IVW: ", length(unique(temp$metabolite))))
+temp = temp[which(temp$metabolite %in% temp$metabolite[which(temp$pval < 0.05/threshold & temp$method == "Inverse variance weighted")]),]
+print(paste0("Number of metabolites that had significant Mendelian randomization IVW p-values: ", length(unique(temp$metabolite))))
+temp = temp[which(temp$metabolite %in% temp$metabolite[which((temp$b < 0 & temp$reg_est < 0 & temp$method == "MR Egger") | 
+                                                            (temp$b > 0 & temp$reg_est > 0 & temp$method == "MR Egger"))]),]
+print(paste0("Number of metabolites that had same direction of effect between regression and Mendelian randomization by MR Egger: ", length(unique(temp$metabolite))))
+#temp = temp[which(temp$metabolite %in% temp$metabolite[which(temp$pval < 0.05/threshold & temp$method == "MR Egger")]),]
+#print(paste0("Number of metabolites that had significant Mendelian randomization MR Egger p-values: ", length(unique(temp$metabolite))))
+temp = temp[which((temp$metabolite %in% unique(pleiotropy_for$exposure[which(pleiotropy_for$pval > 0.05/threshold)]) & temp$direction == "met_to_out") |
+  (temp$metabolite %in% unique(pleiotropy_rev$outcome[which(pleiotropy_rev$pval > 0.05/threshold)]) & temp$direction == "out_to_met")),]
+print(paste0("Number of metabolites that lacked evidence of horizontal pleiotropy by MR-Egger intercept p-value: ", length(unique(temp$metabolite))))
+temp = temp[which(
+  (temp$metabolite %in% unique(presso_for$Exposure[which(presso_for$'MR Analysis' == "Outlier-corrected" & (presso_for$'P-value' < 0.05/threshold | is.na(presso_for$'P-value')))]) & temp$direction == "met_to_out") |
+  (temp$metabolite %in% unique(presso_rev$Exposure[which(presso_rev$'MR Analysis' == "Outlier-corrected" & (presso_for$'P-value' < 0.05/threshold | is.na(presso_rev$'P-value')))]) & temp$direction == "out_to_met")
+  ),]
+print(paste0("Number of metabolites that lacked evidence of heterogeneity by MR-PRESSO outlier-corrected p-value: ", length(unique(temp$metabolite))))
+#fwrite(list(temp$metabolite), paste0(path, "figs/", outcome, "list.txt"))
+
+cad = temp[which(temp$method == "Inverse variance weighted"),]
+
+forward = temp[which(temp$direction == "met_to_out"),]
+reverse = temp[which(temp$direction == "out_to_met"),]
+nrow(forward[which(forward$b < 0),])
+nrow(forward[which(forward$b > 0),])
+nrow(reverse[which(reverse$b < 0),])
+nrow(reverse[which(reverse$b > 0),])
+
+res_plot = list(
+  "CAD" = gsub("met-d-", "", cad$metabolite[which(cad$direction == "met_to_out" & cad$pval < 0.05/threshold)]),
+  "PAD" = gsub("met-d-", "", pad$metabolite[which(pad$direction == "met_to_out" & pad$pval < 0.05/threshold)]),
+  "VTE" = gsub("met-d-", "", vte$metabolite[which(vte$direction == "met_to_out" & vte$pval < 0.05/threshold)])
+  )
+library(ggvenn)
+jpeg(paste0(path, "figs/mr_met_to_out_venn.jpg"), width = 10, height = 10, units = "in", res = 300)
+ggvenn(res_plot, fill_color = c("white", "white", "white"), set_name_size = 15, text_size = 25, show_percentage = FALSE, label_sep = "\n", show_elements = FALSE)
+dev.off()
+
+cad_for = cad[which(cad$direction == "met_to_out"),]
+pad_for = pad[which(pad$direction == "met_to_out"),]
+vte_for = vte[which(vte$direction == "met_to_out"),]
+
+cad_for = cad[which(cad$direction == "met_to_out" & cad$pval < 0.05/threshold),]
+pad_for = pad[which(pad$direction == "met_to_out" & pad$pval < 0.05/threshold),]
+vte_for = vte[which(vte$direction == "met_to_out" & vte$pval < 0.05/threshold),]
+
+cad_rev = cad[which(cad$direction == "out_to_met" & cad$pval < 0.05/threshold),]
+pad_rev = pad[which(pad$direction == "out_to_met" & pad$pval < 0.05/threshold),]
+vte_rev = vte[which(vte$direction == "out_to_met" & vte$pval < 0.05/threshold),]
+
+
+res_plot = list(
+  "Met->CAD" = gsub("met-d-", "", cad_for$metabolite),
+  "Met->PAD" = gsub("met-d-", "", pad_for$metabolite),
+  "Met->VTE" = gsub("met-d-", "", vte_for$metabolite),
+  "CAD->Met" = gsub("met-d-", "", cad_rev$metabolite),
+  "PAD->Met" = gsub("met-d-", "", pad_rev$metabolite),
+  "VTE->Met" = gsub("met-d-", "", vte_rev$metabolite)
+  )
+library(ggvenn)
+jpeg(paste0(path, "figs/mr_venn.jpg"), width = 10, height = 10, units = "in", res = 300)
+ggvenn(res_plot, fill_color = c("red", "red", "yellow", "blue"), text_size = 1, show_elements = TRUE, show_percentage = FALSE, label_sep = "\n")
+dev.off()
+
+temp = as.data.frame(met_list)
+colnames(temp) = "metabolite"
+temp$cad_for = ifelse(temp$metabolite %in% cad_for$metabolite[which(cad_for$b > 0 & cad_for$pval < 0.05/threshold)], 1, 
+  ifelse(temp$metabolite %in% cad_for$metabolite[which(cad_for$b < 0 & cad_for$pval < 0.05/threshold)], -1, 0))
+temp$pad_for = ifelse(temp$metabolite %in% pad_for$metabolite[which(pad_for$b > 0 & pad_for$pval < 0.05/threshold)], 1, 
+  ifelse(temp$metabolite %in% pad_for$metabolite[which(pad_for$b < 0 & pad_for$pval < 0.05/threshold)], -1, 0))
+temp$vte_for = ifelse(temp$metabolite %in% vte_for$metabolite[which(vte_for$b > 0 & vte_for$pval < 0.05/threshold)], 1, 
+  ifelse(temp$metabolite %in% vte_for$metabolite[which(vte_for$b < 0 & vte_for$pval < 0.05/threshold)], -1, 0))
+temp$cad_rev = ifelse(temp$metabolite %in% cad_rev$metabolite[which(cad_rev$b > 0 & cad_rev$pval < 0.05/threshold)], 1, 
+  ifelse(temp$metabolite %in% cad_rev$metabolite[which(cad_rev$b < 0 & cad_rev$pval < 0.05/threshold)], -1, 0))
+temp$pad_rev = ifelse(temp$metabolite %in% pad_rev$metabolite[which(pad_rev$b > 0 & pad_rev$pval < 0.05/threshold)], 1, 
+  ifelse(temp$metabolite %in% pad_rev$metabolite[which(pad_rev$b < 0 & pad_rev$pval < 0.05/threshold)], -1, 0))
+temp$vte_rev = ifelse(temp$metabolite %in% vte_rev$metabolite[which(vte_rev$b > 0 & vte_rev$pval < 0.05/threshold)], 1, 
+  ifelse(temp$metabolite %in% vte_rev$metabolite[which(vte_rev$b < 0 & vte_rev$pval < 0.05/threshold)], -1, 0))
+temp = temp[which(temp$cad_for != 0 | temp$pad_for != 0 | temp$vte_for != 0 | temp$cad_rev != 0 | temp$pad_rev != 0 | temp$vte_rev != 0),]
+
+res_plot = temp %>% pivot_longer(!metabolite, names_to = "phenotype", values_to = "value") %>% as.data.frame()
+res_plot = res_plot[-which(res_plot$phenotype == "pad_rev"),]
+ggplot() + 
+  geom_tile(dat = res_plot, mapping = aes(x = metabolite, y = phenotype, fill = value), color = "white", alpha = 0.5) +
+  scale_fill_gradient2(low = "blue", mid = "gray", high = "red", guide = guide_colorbar(direction = "horizontal", title.position = "top")) +
+  scale_x_discrete(limits = res_plot$metabolite, labels = gsub("met-d-", "", res_plot$metabolite)) +
+  scale_y_discrete(breaks = c("cad_for", "cad_rev", "pad_for", "vte_for", "vte_rev"), labels = c("MET→CAD", "CAD→MET", "MET→PAD", "MET→VTE", "VTE→MET")) +
+  labs(x = "", y = "", fill = "Effect Size") + 
+  guides(fill = FALSE) +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(0, "cm"), axis.text.x = element_text(size = 25, color = "black", angle = 90), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_text(size = 40, color = "black"), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 30), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+ggsave(paste0(path, "figs/mr_heatmap.jpg"), device = "jpg", type = "cairo", height = 10, width = 40)
+
+fwrite(list(cad_for$metabolite), paste0(path, "cad_for_list.txt"))
+fwrite(list(cad_rev$metabolite), paste0(path, "cad_rev_list.txt"))
+fwrite(list(pad_for$metabolite), paste0(path, "pad_for_list.txt"))
+fwrite(list(pad_rev$metabolite), paste0(path, "pad_rev_list.txt"))
+fwrite(list(vte_for$metabolite), paste0(path, "vte_for_list.txt"))
+fwrite(list(vte_rev$metabolite), paste0(path, "vte_rev_list.txt"))
+
+cad = fread(paste0(path, "mr/", biobank, "_cad_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+cad = cad[which(cad$method == "Inverse variance weighted"),]
+pad = fread(paste0(path, "mr/", biobank, "_pad_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+pad = pad[which(pad$method == "Inverse variance weighted"),]
+vte = fread(paste0(path, "mr/", biobank, "_vte_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+vte = vte[which(vte$method == "Inverse variance weighted"),]
+
+(cor.test(cad$b, pad$b)$estimate)^2
+cor.test(cad$b, pad$b)$p.value
+(cor.test(cad$b, vte$b)$estimate)^2
+cor.test(cad$b, vte$b)$p.value
+(cor.test(pad$b, vte$b)$estimate)^2
+cor.test(pad$b, vte$b)$p.value
+
+outcome_list = c("CAD", "PAD", "VTE")
+
+ggplot() +
+  geom_tile(data = res_plot, mapping = aes(x = phenotype1, y = phenotype2), fill = "white") +
+  geom_point(data = res_plot, mapping = aes(x = phenotype1, y = phenotype2, color = beta), size = 75) +
+  geom_point(data = res_plot, mapping = aes(x = phenotype1, y = phenotype2, color = beta), size = 75, shape = 1, colour = "black") +
+  geom_text(data = res_plot, mapping = aes(x = phenotype1, y = phenotype2, label = round(beta, 2)), size = 20) +
+  scale_x_discrete(limits = rev) +
+  scale_y_discrete(limits = rev) +
+  scale_color_gradient2(low = "white", mid = "white", high = "red") +
+  guides(fill = FALSE, color = FALSE) +
+  labs(x = "", y = "", color = "Correlation\nCoefficient", size = "P-value") + 
+  theme(plot.tag = element_text(size = 25), legend.position = "right", legend.spacing = unit(0, "cm"), axis.text.x = element_text(size = 40, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_text(size = 40, color = "black"), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 30), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+ggsave(paste0(path, "figs/mr_correlation.jpg"), device = "jpg", type = "cairo", height = 10, width = 10)
+
+##################################################
+########## PLOT EPIDEMIOLOGY ANALYSIS
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+today = "20230222"
+biobank = "ukbb"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(ggplot2)) {install.packages("ggplot2"); library(ggplot2)}
+if(!require(ggrepel)) {install.packages("ggrepel"); library(ggplot2)}
+if(!require(grid)) {install.packages("grid"); library(grid)}
+if(!require(gridExtra)) {install.packages("gridExtra"); library(gridExtra)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+calculate_weighted_correlation = function(x, x_weights, y, y_weights) {
+  mu_x = sum(x * x_weights)/sum(x_weights)
+  mu_y = sum(y * y_weights)/sum(y_weights)
+  cov_xy = sum((x-mu_x)*(y-mu_y)*x_weights*y_weights)/sum(x_weights * y_weights)
+  cor_xy = cov_xy/(sqrt(sum((x-mu_x)^2*x_weights)/sum(x_weights)) * sqrt(sum((y-mu_y)^2*y_weights)/sum(y_weights)))
+  return(cor_xy)
+}
+
+calculate_weighted_correlation(res$est[which(res$outcome == "cad_incd")],
+  res$pval[which(res$outcome == "cad_incd")],
+  res$est[which(res$outcome == "pad_incd")],
+  res$pval[which(res$outcome == "pad_incd")])
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = convert_camel_case(raw$metabolite)
+threshold = 41
+res = fread(paste0(path, "reg/", biobank, "_prs_reg_survival_sensitivity_results_20230222.csv"))
+res$metabolite = str_replace(res$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+# MAKE CIRCOS PLOTS BY OUTCOME
+outcome_list = c("cad_incd", "pad_incd", "vte_incd")
+outcome_full_list = c("CAD", "PAD", "VTE")
+
+i = 1
+res_temp = res[which(res$outcome == outcome_list[i]),]
+res_temp = res_temp %>% arrange(type)
+temp = res_temp[order(res_temp$type, -res_temp$odds),]
+temp$order = as.factor(1:nrow(res_temp))
+temp = temp[,c("metabolite", "order")]
+res_temp = merge(res_temp, temp, by = "metabolite")
+res_temp = res_temp[order(res_temp$order),]
+res_temp$color = ifelse(res_temp$pval < 0.05/threshold, res_temp$type, "gray")
+A = ggplot() + 
+  geom_errorbar(data = res_temp, mapping = aes(x = as.factor(order), ymin = odds_lower, ymax = odds_upper, color = color), size = 0.75, width = 0.1) +
+  geom_point(data = res_temp, mapping = aes(x = as.factor(order), y = odds, color = type, stat = "identity")) +
+  geom_hline(yintercept = 1, size = 1, linetype = 2) +
+  ylim(min(res$odds_lower), max(res$odds_upper)) +
+  scale_x_discrete(limits = as.factor(res_temp$order), labels = gsub("met_d_", "", res_temp$metabolite)) + 
+  scale_y_continuous(limits = c(0.65, 1.90), breaks = c(0.65, 1.0, 1.35, 1.70)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) +
+  labs(x = "", y = "CAD") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_text(size = 10, color = "black"), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+i = 2
+res_temp = res[which(res$outcome == outcome_list[i]),]
+res_temp = res_temp %>% arrange(type)
+res_temp = merge(res_temp, temp, by = "metabolite")
+res_temp = res_temp[order(res_temp$order),]
+res_temp$color = ifelse(res_temp$pval < 0.05/threshold, res_temp$type, "gray")
+B = ggplot() + 
+  geom_errorbar(data = res_temp, mapping = aes(x = as.factor(order), ymin = odds_lower, ymax = odds_upper, color = color), size = 1, width = 0.1) +
+  geom_point(data = res_temp, mapping = aes(x = as.factor(order), y = odds, color = type, stat = "identity")) +
+  geom_hline(yintercept = 1, size = 1, linetype = 2) +
+  ylim(min(res$odds_lower), max(res$odds_upper)) +
+  scale_x_discrete(limits = as.factor(res_temp$order), labels = " ") + 
+  scale_y_continuous(limits = c(0.65, 1.90), breaks = c(0.65, 1.0, 1.35, 1.70)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) +
+  labs(x = "", y = "PAD") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_blank(), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+i = 3
+res_temp = res[which(res$outcome == outcome_list[i]),]
+res_temp = res_temp %>% arrange(type)
+res_temp = merge(res_temp, temp, by = "metabolite")
+res_temp = res_temp[order(res_temp$order),]
+res_temp$color = ifelse(res_temp$pval < 0.05/threshold, res_temp$type, "gray")
+C = ggplot() + 
+  geom_errorbar(data = res_temp, mapping = aes(x = as.factor(order), ymin = odds_lower, ymax = odds_upper, color = color), size = 0.75, width = 0.1) +
+  geom_point(data = res_temp, mapping = aes(x = as.factor(order), y = odds, color = type, stat = "identity")) +
+  geom_hline(yintercept = 1, size = 1, linetype = 2) +
+  ylim(min(res$odds_lower), max(res$odds_upper)) +
+  scale_x_discrete(limits = as.factor(res_temp$order), labels = " ") + 
+  scale_y_continuous(limits = c(0.65, 1.90), breaks = c(0.65, 1.0, 1.35, 1.70)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) + #guide_legend(ncol = 1, override.aes = list(size = 10))) +
+  labs(x = "", y = "VTE", color = NULL) + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_blank(), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+G = grid.arrange(A, B, C, ncol = 3, left = textGrob("", rot = 90, gp = gpar(fontsize = 15)), bottom = textGrob("", gp = gpar(fontsize = 1)))
+ggsave(paste0(path, "figs/regression_forest_FINAL.tiff"), G, device = "tiff", type = "cairo", height = 25, width = 20, dpi = 700)
+
+cad = res[which(res$outcome == "cad_incd"),]
+pad = res[which(res$outcome == "pad_incd"),]
+vte = res[which(res$outcome == "vte_incd"),]
+
+##################################################
+########## PLOT EPIDEMIOLOGY ANALYSIS VIA HEATMAP
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+today = "20230222"
+biobank = "ukbb"
+
+# LOAD PACKAGES
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(ggplot2)) {install.packages("ggplot2"); library(ggplot2)}
+if(!require(ggrepel)) {install.packages("ggrepel"); library(ggplot2)}
+if(!require(grid)) {install.packages("grid"); library(grid)}
+if(!require(gridExtra)) {install.packages("gridExtra"); library(gridExtra)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = convert_camel_case(raw$metabolite)
+threshold = 41
+res = fread(paste0(path, "reg/", biobank, "_prs_reg_survival_sensitivity_results_20230222.csv"))
+res$metabolite = str_replace(res$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+# MAKE HEATMAP PLOTS
+temp = res[which(res$outcome == "cad_incd"),]
+temp = temp[order(temp$type, temp$odds),]
+temp$order = as.factor(1:nrow(temp))
+res_temp = merge(res, temp[,c("metabolite", "order")], by = "metabolite", all.x = TRUE)
+
+library("gplots")
+res_temp_mat = res_temp %>% arrange(order) %>% select(metabolite, outcome, est) %>% pivot_wider(names_from = outcome, values_from = est) %>% column_to_rownames("metabolite") %>% as.matrix() %>% t()
+jpeg(paste0(path, "figs/regression_heatmap.jpg"), width = 10, height = 5, units = "in", res = 300)
+heatmap.2(res_temp_mat, key = TRUE, main = "", scale = "none", Rowv = c("cad_incd", "pad_incd", "vte_incd"), dendrogram = "column", col = bluered(100), trace = "none", density.info = "none", cexRow = 2, labRow = c("CAD", "PAD", "VTE"), cexCol = 0.4)
+dev.off()
+
+res_plot = list(
+  "CAD" = gsub("met_d_", "", res$metabolite[which(res$outcome == "cad_incd" & res$pval < 0.05/threshold)]),
+  "PAD" = gsub("met_d_", "", res$metabolite[which(res$outcome == "pad_incd" & res$pval < 0.05/threshold)]),
+  "VTE" = gsub("met_d_", "", res$metabolite[which(res$outcome == "vte_incd" & res$pval < 0.05/threshold)])
+  )
+library(ggvenn)
+tiff(paste0(path, "figs/association_venn.tiff"), width = 10, height = 10, units = "in", res = 300)
+ggvenn(res_plot, fill_color = c("white", "white", "white"), set_name_size = 15, text_size = 2, show_percentage = FALSE, label_sep = "\n", show_elements = FALSE)
+dev.off()
+
+cad = fread(paste0(path, "mr/ukbb_cad_met_to_out_mr_main_20231017.csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+pad = fread(paste0(path, "mr/ukbb_pad_met_to_out_mr_main_20231017.csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+vte = fread(paste0(path, "mr/ukbb_vte_met_to_out_mr_main_20231017.csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+
+(cor.test(cad$b, pad$b)$estimate)^2
+cor.test(cad$b, pad$b)$p.value
+(cor.test(cad$b, vte$b)$estimate)^2
+cor.test(cad$b, vte$b)$p.value
+(cor.test(pad$b, vte$b)$estimate)^2
+cor.test(pad$b, vte$b)$p.value
+
+cad$outcome = "CAD"
+pad$outcome = "PAD"
+vte$outcome = "VTE"
+
+total = rbind(rbind(cad, pad), vte)
+total = total[which(total$method == "Inverse variance weighted"),]
+
+library("gplots")
+res_temp_mat = total %>% arrange(b) %>% select(exposure, outcome, b) %>% pivot_wider(names_from = outcome, values_from = b) %>% column_to_rownames("exposure") %>% as.matrix() %>% t()
+tiff(paste0(path, "figs/mr_heatmap.tiff"), width = 10, height = 5, units = "in", res = 300)
+heatmap.2(res_temp_mat, key = TRUE, main = "", scale = "none", dendrogram = "column", col = bluered(100), trace = "none", density.info = "none", cexRow = 2, cexCol = 0.4)
+dev.off()
+
+##################################################
+########## PLOT MENDELIAN RANDOMIZATION	
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+today = "20231017"
+biobank = "ukbb"
+threshold = 41
+
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(TwoSampleMR)) {install_github("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(ggplot2)) {install_github("ggplot2"); library(ggplot2)}
+if(!require(grid)) {install.packages("grid"); library(grid)}
+if(!require(gridExtra)) {install.packages("gridExtra"); library(gridExtra)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = str_replace(raw$metabolite, "met-d-IDL_IDL", "met-d-IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+cad = fread(paste0(path, "mr/", biobank, "_cad_out_to_met_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+cad = cad[,c("id.outcome", "b", "se", "pval")]
+colnames(cad) = c("id.outcome", "cad_b", "cad_se", "cad_pval")
+dec = cad$id.outcome[which(cad$cad_b < 0 & cad$cad_pval < 0.05/threshold)]
+inc = cad$id.outcome[which(cad$cad_b > 0 & cad$cad_pval < 0.05/threshold)]
+
+temp = fread(paste0(path, "mr/ukbb_cad_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+temp = temp[which(temp$method == "Inverse variance weighted"),]
+temp = merge(temp, raw, by.x = "exposure", by.y = "metabolite")
+temp = temp[order(temp$type, -temp$b),]
+temp$order = as.factor(1:nrow(temp))
+temp = temp[,c("exposure", "order")]
+
+outcome_list = c("cad", "pad", "vte")
+
+i = 1
+met_to_out = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$method == "Inverse variance weighted"),]
+met_to_out = merge(met_to_out, raw, by.x = "exposure", by.y = "metabolite")
+mod_temp = merge(temp, met_to_out, by = "exposure")
+mod_temp = mod_temp[order(mod_temp$order),]
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+A = ggplot() + 
+  geom_errorbar(data = mod_temp, mapping = aes(x = as.factor(order), ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = color), size = 0.75, width = 0.1) +
+  geom_point(data = mod_temp, mapping = aes(x = as.factor(order), y = b, color = type, stat = "identity")) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  scale_x_discrete(limits = as.factor(mod_temp$order), labels = as.factor(gsub("met-d-", "", mod_temp$exposure))) + 
+  scale_y_continuous(limits = c(-0.60, 0.75), breaks = seq(-0.60, 0.75, 0.5), labels = seq(-0.60, 0.75, 0.5)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) +
+  labs(x = "", y = "CAD") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_text(size = 10, color = "black"), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+i = 2
+met_to_out = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$method == "Inverse variance weighted"),]
+met_to_out = merge(met_to_out, raw, by.x = "exposure", by.y = "metabolite")
+mod_temp = merge(temp, met_to_out, by = "exposure")
+mod_temp = mod_temp[order(mod_temp$order),]
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+B = ggplot() + 
+  geom_errorbar(data = mod_temp, mapping = aes(x = as.factor(order), ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = color), size = 0.75, width = 0.1) +
+  geom_point(data = mod_temp, mapping = aes(x = as.factor(order), y = b, color = type, stat = "identity")) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  scale_x_discrete(limits = as.factor(mod_temp$order), labels = "") + 
+  scale_y_continuous(limits = c(-0.60, 0.75), breaks = seq(-0.60, 0.75, 0.5), labels = seq(-0.60, 0.75, 0.5)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) +
+  labs(x = "", y = "PAD") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_blank(), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+i = 3
+met_to_out = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$method == "Inverse variance weighted"),]
+met_to_out = merge(met_to_out, raw, by.x = "exposure", by.y = "metabolite")
+mod_temp = merge(temp, met_to_out, by = "exposure")
+mod_temp = mod_temp[order(mod_temp$order),]
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+C = ggplot() + 
+  geom_errorbar(data = mod_temp, mapping = aes(x = as.factor(order), ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = color), size = 0.75, width = 0.1) +
+  geom_point(data = mod_temp, mapping = aes(x = as.factor(order), y = b, color = type, stat = "identity")) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  scale_x_discrete(limits = as.factor(mod_temp$order), labels = "") + 
+  scale_y_continuous(limits = c(-0.60, 0.75), breaks = seq(-0.60, 0.75, 0.5), labels = seq(-0.60, 0.75, 0.5)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) + #guide_legend(ncol = 1, override.aes = list(size = 10))) +
+  labs(x = "", y = "VTE", color = NULL) + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_blank(), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+G = grid.arrange(A, B, C, ncol = 3, left = textGrob("", rot = 90, gp = gpar(fontsize = 15)), bottom = textGrob("", gp = gpar(fontsize = 1)))
+ggsave(paste0(path, "figs/mr_met_to_out_forest_FINAL.tiff"), G, device = "tiff", type = "cairo", height = 25, width = 20, dpi = 700)
+
+i = 1
+out_to_met = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_out_to_met_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+out_to_met = out_to_met[which(out_to_met$method == "Inverse variance weighted"),]
+out_to_met = merge(out_to_met, raw, by.x = "outcome", by.y = "metabolite")
+out_to_met = out_to_met[,-"exposure"]
+mod_temp = merge(temp, out_to_met, by.x = "exposure", by.y = "outcome")
+mod_temp = mod_temp[order(mod_temp$order),]
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+A = ggplot() + 
+  geom_errorbar(data = mod_temp, mapping = aes(x = as.factor(order), ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = color), size = 0.75, width = 0.1) +
+  geom_point(data = mod_temp, mapping = aes(x = as.factor(order), y = b, color = type, stat = "identity")) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  scale_x_discrete(limits = as.factor(mod_temp$order), labels = as.factor(gsub("met-d-", "", mod_temp$exposure))) + 
+  scale_y_continuous(limits = c(-0.15, 0.15), breaks = seq(-0.15, 0.15, 0.1), labels = seq(-0.15, 0.15, 0.1)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) +
+  labs(x = "", y = "CAD") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_text(size = 10, color = "black"), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+i = 2
+out_to_met = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_out_to_met_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+out_to_met = out_to_met[which(out_to_met$method == "Inverse variance weighted"),]
+out_to_met = merge(out_to_met, raw, by.x = "outcome", by.y = "metabolite")
+out_to_met = out_to_met[,-"exposure"]
+mod_temp = merge(temp, out_to_met, by.x = "exposure", by.y = "outcome")
+mod_temp = mod_temp[order(mod_temp$order),]
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+B = ggplot() + 
+  geom_errorbar(data = mod_temp, mapping = aes(x = as.factor(order), ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = color), size = 0.75, width = 0.1) +
+  geom_point(data = mod_temp, mapping = aes(x = as.factor(order), y = b, color = type, stat = "identity")) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  scale_x_discrete(limits = as.factor(mod_temp$order), labels = "") + 
+  scale_y_continuous(limits = c(-0.15, 0.15), breaks = seq(-0.15, 0.15, 0.1), labels = seq(-0.15, 0.15, 0.1)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) +
+  labs(x = "", y = "PAD") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_blank(), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+i = 3
+out_to_met = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_out_to_met_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+out_to_met = out_to_met[which(out_to_met$method == "Inverse variance weighted"),]
+out_to_met = merge(out_to_met, raw, by.x = "outcome", by.y = "metabolite")
+out_to_met = out_to_met[,-"exposure"]
+mod_temp = merge(temp, out_to_met, by.x = "exposure", by.y = "outcome")
+mod_temp = mod_temp[order(mod_temp$order),]
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+C = ggplot() + 
+  geom_errorbar(data = mod_temp, mapping = aes(x = as.factor(order), ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = color), size = 0.75, width = 0.1) +
+  geom_point(data = mod_temp, mapping = aes(x = as.factor(order), y = b, color = type, stat = "identity")) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  scale_x_discrete(limits = as.factor(mod_temp$order), labels = "") + 
+  scale_y_continuous(limits = c(-0.15, 0.15), breaks = seq(-0.15, 0.15, 0.1), labels = seq(-0.15, 0.15, 0.1)) +
+  scale_color_manual(breaks = c("FA", "HDL", "IDL", "LDL", "M" , "NL", "OL", "VLDL"), labels = c("Fatty Acid", "HDL", "IDL", "LDL", "Miscellaneous" , "Non-Lipid", "Other Lipid", "VLDL"), values = c("FA" = "hotpink2", "HDL" = "purple", "IDL" = "blue", "LDL" = "steelblue2", "M" = "limegreen", "NL" = "goldenrod2", "OL" = "orange", "VLDL" = "red", "gray" = "gray")) +
+  guides(alpha = FALSE, color = FALSE) + #guide_legend(ncol = 1, override.aes = list(size = 10))) +
+  labs(x = "", y = "VTE", color = "") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "bottom", legend.spacing = unit(-3, "cm"), axis.text.x = element_text(size = 20, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_blank(), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+G = grid.arrange(A, B, C, ncol = 3, left = textGrob("", rot = 90, gp = gpar(fontsize = 15)), bottom = textGrob("", gp = gpar(fontsize = 1)))
+ggsave(paste0(path, "figs/mr_out_to_met_forest_FINAL.tiff"), G, device = "tiff", type = "cairo", height = 25, width = 20, dpi = 700)
+
+##################################################
+########## PLOT MENDELIAN RANDOMIZATION SENSITIVITY ANALYSIS
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+today = "20231017"
+biobank = "ukbb"
+threshold = 41
+
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(TwoSampleMR)) {install_github("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(ggplot2)) {install_github("ggplot2"); library(ggplot2)}
+if(!require(grid)) {install.packages("grid"); library(grid)}
+if(!require(gridExtra)) {install.packages("gridExtra"); library(gridExtra)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = str_replace(raw$metabolite, "met-d-IDL_IDL", "met-d-IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+res = fread(paste0(path, "reg/", biobank, "_prs_reg_survival_sensitivity_results_20230222.csv"))
+res$metabolite = str_replace(res$metabolite, "met_d_IDL_IDL", "met_d_IDL")
+outcome_list = c("cad", "pad", "vte")
+outcome_long = c("cad_incd", "pad_incd", "vte_incd")
+
+phenotype = "densitylipoprotein"
+select_list = fread(paste0(path, "lists/", phenotype, "_list.txt"), header = FALSE)$V1
+
+i = 1
+met_to_out = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$method == "Inverse variance weighted" & met_to_out$exposure %in% select_list),]
+mod_temp = merge(met_to_out, raw, by.x = "exposure", by.y = "metabolite")
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+#
+res_temp = res[which(res$outcome == outcome_long[i] & res$metabolite %in% gsub("\\-", "_", select_list)),]
+res_temp = res_temp %>% arrange(type)
+res_temp$color = ifelse(res_temp$pval < 0.05/threshold, res_temp$type, "gray")
+#
+mr = mod_temp[,c("exposure", "b", "se", "pval")]
+colnames(mr) = c("metabolite", "est", "ste", "pval")
+mr$analysis = "mr"
+epi = res_temp[,c("metabolite", "est", "ste", "pval")]
+epi$metabolite = gsub("met_d_", "met-d-", epi$metabolite)
+epi$analysis = "epi"
+plot_temp = rbind(mr, epi)
+plot_temp = plot_temp[order(plot_temp$metabolite),]
+plot_temp$order = 1:nrow(plot_temp)
+plot_temp$order = ifelse(plot_temp$analysis == "mr", plot_temp$order, plot_temp$order - 0.75)
+plot_temp$label = ifelse(plot_temp$analysis == "mr", plot_temp$metabolite, "")
+
+#plot_temp$order = c(5.4, 6.4, 3.4, 4.4, 1.4, 2.4,
+#                    5.2, 6.2, 3.2, 4.2, 1.2, 2.2,
+#                    5.0, 6.0, 3.0, 4.0, 1.0, 2.0, 
+#                    5.6, 6.6, 3.6, 4.6, 1.6, 2.6
+#                    )
+
+#plot_temp$order = c(5.2, 6.2, 3.2, 4.2, 1.2, 2.2,
+#                    5.3, 6.3, 3.3, 4.3, 1.3, 2.3,
+#                    5.4, 6.4, 3.4, 4.4, 1.4, 2.4,
+#                    5.1, 6.1, 3.1, 4.1, 1.1, 2.1,
+#                    5.5, 6.5, 3.5, 4.5, 1.5, 2.5,
+#                    5.0, 6.0, 3.0, 4.0, 1.0, 2.0
+#  )
+
+plot_temp$label = ifelse(plot_temp$analysis == "mr", plot_temp$metabolite, "")
+A=ggplot() + 
+  geom_errorbar(data = plot_temp, mapping = aes(x = order, ymin = est - 1.96 * ste, ymax = est + 1.96 * ste, color = analysis, alpha = ifelse(pval < 0.05/threshold, 1, 0)), size = 2.5, width = 0) +
+  geom_point(data = plot_temp, mapping = aes(x = order, y = est, color = analysis, stat = "identity"), size = 5) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  geom_vline(xintercept = 10.125, size = 1, linetype = 2) +
+  geom_vline(xintercept = 20.125, size = 1, linetype = 2) +
+  scale_x_discrete(limits = plot_temp$order, labels = as.factor(gsub("met-d-", "", plot_temp$label))) + 
+  scale_y_continuous(limits = c(-0.50, 0.70), breaks = seq(-0.40, 0.40, 0.2), labels = seq(-0.40, 0.40, 0.2)) +
+  scale_color_manual(breaks = c("epi", "mr"), labels = c("   ", "   "), values = c("epi" = "blue", "mr" = "red")) +
+  guides(alpha = FALSE, color = guide_legend(ncol = 1)) +
+  labs(x = "", y = "CAD", color = "") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "top", legend.spacing = unit(-1, "cm"), axis.text.x = element_text(size = 40, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_text(size = 40, color = "black", vjust = 0.1), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 25), legend.title = element_text(size = 10), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+
+i = 1
+met_to_out = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$method == "Inverse variance weighted" & met_to_out$exposure %in% select_list),]
+mod_temp = merge(met_to_out, raw, by.x = "exposure", by.y = "metabolite")
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+#
+res_temp = res[which(res$outcome == outcome_long[i] & res$metabolite %in% gsub("\\-", "_", select_list)),]
+res_temp = res_temp %>% arrange(type)
+res_temp$color = ifelse(res_temp$pval < 0.05/threshold, res_temp$type, "gray")
+#
+mr = mod_temp[,c("exposure", "b", "se", "pval")]
+colnames(mr) = c("metabolite", "est", "ste", "pval")
+mr$analysis = "mr"
+epi = res_temp[,c("metabolite", "est", "ste", "pval")]
+epi$metabolite = gsub("met_d_", "met-d-", epi$metabolite)
+epi$analysis = "epi"
+plot_temp = rbind(mr, epi)
+plot_temp = plot_temp[order(plot_temp$metabolite),]
+#plot_temp$order = c(2.95,2.95,1.45,1.45,4.45,4.45,2.8,2.8,1.3,1.3,4.3,4.3,2.65,2.65,1.15,1.15,4.15,4.15,3.1,3.1,1.6,1.6,4.6,4.6,2.5,2.5,1,1,4,4,3.25,3.25,1.75,1.75,4.75,4.75)
+#plot_temp$order = c(2.4,2.4,1.4,1.4,3.4,3.4,2.2,2.2,1.2,1.2,3.2,3.2,2,2,1,1,3,3,2.6,2.6,1.6,1.6,3.6,3.6)
+plot_temp$order = 1:nrow(plot_temp)
+plot_temp$order = ifelse(plot_temp$analysis == "mr", plot_temp$order, plot_temp$order - 0.5)
+#plot_temp$order = c(1, 2, 3, 4, 5, 6,
+#  1.2, 2.2, 3.2, 4.2, 5.2, 6.2,
+#  1.4, 2.4, 3.4, 4.4, 5.4, 6.4)
+
+#plot_temp$order = c(5.4, 6.4, 3.4, 4.4, 1.4, 2.4,
+#                    5.2, 6.2, 3.2, 4.2, 1.2, 2.2,
+#                    5.0, 6.0, 3.0, 4.0, 1.0, 2.0, 
+#                    5.6, 6.6, 3.6, 4.6, 1.6, 
+#                    )
+plot_temp$label = plot_temp$metabolite
+plot_temp$label = sapply(strsplit(plot_temp$label, "_"), head, 1)
+plot_temp$label = gsub("met-d-", "", plot_temp$label)
+plot_temp$label = ifelse(plot_temp$analysis == "mr", plot_temp$label, "")
+#plot_temp$label = ifelse(plot_temp$label == "size", "Size", 
+#                  ifelse(plot_temp$label == "TG", "Triglyceride",
+#                  ifelse(plot_temp$label == "P", "Concentration",
+#                  ifelse(plot_temp$label == "L", "Total Lipid",
+#                  ifelse(plot_temp$label == "C", "Cholesterol", "")))))
+
+B=ggplot() + 
+  geom_errorbar(data = plot_temp, mapping = aes(x = order, ymin = est - 1.96 * ste, ymax = est + 1.96 * ste, color = analysis, alpha = ifelse(pval < 0.05/threshold, 1, 0)), size = 2.5, width = 0) +
+  geom_point(data = plot_temp, mapping = aes(x = order, y = est, color = analysis, stat = "identity"), size = 5) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  geom_vline(xintercept = 10.125, size = 1, linetype = 2) +
+  geom_vline(xintercept = 20.125, size = 1, linetype = 2) +
+  scale_x_discrete(limits = plot_temp$order, labels = plot_temp$label) + 
+  scale_y_continuous(limits = c(-0.4, 0.65), breaks = seq(-0.4, 0.60, 0.2), labels = seq(-0.4, 0.60, 0.2)) +
+  scale_color_manual(breaks = c("epi", "mr"), labels = c("Epidemiologic Association", "Mendelian Randomization"), values = c("epi" = "blue", "mr" = "red")) +
+  guides(alpha = FALSE, color = FALSE) +
+  labs(x = "", y = "CAD", color = "") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "top", legend.spacing = unit(-1, "cm"), axis.text.x = element_text(size = 40, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_blank(), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 40), legend.title = element_text(size = 10), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+ggsave(paste0(path, "figs/", phenotype, "_v2_A.jpg"), device = "jpg", type = "cairo", height = 15, width = 10)
+
+i = 1
+met_to_out = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$method == "Inverse variance weighted" & met_to_out$exposure %in% select_list),]
+mod_temp = merge(met_to_out, raw, by.x = "exposure", by.y = "metabolite")
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+#
+res_temp = res[which(res$outcome == outcome_long[i] & res$metabolite %in% gsub("\\-", "_", select_list)),]
+res_temp = res_temp %>% arrange(type)
+res_temp$color = ifelse(res_temp$pval < 0.05/threshold, res_temp$type, "gray")
+#
+mr = mod_temp[,c("exposure", "b", "se", "pval")]
+colnames(mr) = c("metabolite", "est", "ste", "pval")
+mr$analysis = "mr"
+epi = res_temp[,c("metabolite", "est", "ste", "pval")]
+epi$metabolite = gsub("met_d_", "met-d-", epi$metabolite)
+epi$analysis = "epi"
+plot_temp = rbind(mr, epi)
+plot_temp = plot_temp[order(plot_temp$metabolite),]
+plot_temp$order = 1:nrow(plot_temp)
+plot_temp$order = ifelse(plot_temp$analysis == "mr", plot_temp$order, plot_temp$order - 0.75)
+#plot_temp$order = c(5.4, 6.4, 3.4, 4.4, 1.4, 2.4,
+#                    5.2, 6.2, 3.2, 4.2, 1.2, 2.2,
+#                    5.0, 6.0, 3.0, 4.0, 1.0, 2.0, 
+#                    5.6, 6.6, 3.6, 4.6, 1.6, 2.6
+#                    )
+plot_temp$label = ifelse(plot_temp$analysis == "mr", plot_temp$metabolite, "")
+
+C=ggplot() + 
+  geom_errorbar(data = plot_temp, mapping = aes(x = order, ymin = est - 1.96 * ste, ymax = est + 1.96 * ste, color = analysis, alpha = ifelse(pval < 0.05/threshold, 1, 0)), size = 2.5, width = 0) +
+  geom_point(data = plot_temp, mapping = aes(x = order, y = est, color = analysis, stat = "identity"), size = 5) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  geom_vline(xintercept = 10.125, size = 1, linetype = 2) +
+  geom_vline(xintercept = 20.125, size = 1, linetype = 2) +
+  scale_x_discrete(limits = plot_temp$order, labels = as.factor(gsub("met-d-", "", plot_temp$label))) + 
+  scale_y_continuous(limits = c(-0.50, 0.70), breaks = seq(-0.40, 0.40, 0.2), labels = seq(-0.40, 0.40, 0.2)) +
+  scale_color_manual(breaks = c("epi", "mr"), labels = c("   ", "   "), values = c("epi" = "blue", "mr" = "red")) +
+  guides(alpha = FALSE, color = guide_legend(ncol = 1)) +
+  labs(x = "", y = "CAD", color = "") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "top", legend.spacing = unit(-1, "cm"), axis.text.x = element_text(size = 40, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_blank(), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 25), legend.title = element_text(size = 10), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+G = grid.arrange(A, B, C, ncol = 3, left = textGrob("", rot = 90, gp = gpar(fontsize = 15)), bottom = textGrob("", gp = gpar(fontsize = 1)))
+ggsave(paste0(path, "figs/", phenotype, "_v2_A.jpg"), G, device = "jpg", type = "cairo", height = 12, width = 30)
+
+mvmr = fread(paste0(path, "mr/ukbb_mvmr_hdl_cad_results_20231017.csv"))
+met_to_out = fread(paste0(path, "mr/", biobank, "_cad_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$exposure %in% c("met-d-S_HDL_TG", "met-d-HDL_C") & met_to_out$method == "Inverse variance weighted"),]
+mvmr = mvmr[,c("id.exposure", "b", "se", "pval")]
+colnames(mvmr) = c("exposure", "b", "se", "pval")
+mvmr$analysis = "mvmr"
+met_to_out = met_to_out[,c("exposure", "b", "se", "pval")]
+met_to_out$analysis = "mr"
+
+plot_temp = rbind(mvmr, met_to_out)
+plot_temp$label = ifelse(plot_temp$analysis == "mvmr", paste0(gsub("met-d-", "", plot_temp$exposure), " (adjusted)"), gsub("met-d-", "", plot_temp$exposure))
+plot_temp$order = c(1, 3, 2, 4)
+ggplot() + 
+  geom_errorbar(data = plot_temp, mapping = aes(x = order, ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = analysis), size = 2.5, width = 0) +
+  geom_point(data = plot_temp, mapping = aes(x = order, y = b, color = analysis, stat = "identity"), size = 20) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  geom_vline(xintercept = 2.5, size = 1, linetype = 2) +
+  #geom_vline(xintercept = 4.7, size = 1, linetype = 2) +
+  scale_x_discrete(limits = plot_temp$order, labels = plot_temp$label) + 
+  #scale_y_continuous(limits = c(-0.50, 0.70), breaks = seq(-0.40, 0.40, 0.2), labels = seq(-0.40, 0.40, 0.2)) +
+  scale_color_manual(breaks = c("mvmr", "mr"), labels = c("MVMR", "MR"), values = c("mr" = "darkgreen", "mvmr" = "purple")) +
+  guides(alpha = FALSE, color = guide_legend(ncol = 1)) +
+  labs(x = "", y = "CAD", color = "") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "top", legend.spacing = unit(-1, "cm"), axis.text.x = element_text(size = 80, color = "black"), axis.title.x = element_text(size = 80, color = "black"), axis.text.y = element_text(size = 80, color = "black", vjust = 0.1), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 80), legend.title = element_text(size = 10), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+ggsave(paste0(path, "figs/mvmr_hdl_cad.jpg"), device = "jpg", type = "cairo", height = 25, width = 20)
+
+mvmr = fread(paste0(path, "mr/ukbb_mvmr_vldl_vte_fraction_results_20231017.csv"))
+met_to_out = fread(paste0(path, "mr/", biobank, "_vte_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$exposure %in% mvmr$id.exposure & met_to_out$method == "Inverse variance weighted"),]
+
+mvmr = mvmr[,c("id.exposure", "b", "se", "pval")]
+colnames(mvmr) = c("exposure", "b", "se", "pval")
+mvmr$analysis = "mvmr"
+met_to_out = met_to_out[,c("exposure", "b", "se", "pval")]
+met_to_out$analysis = "mr"
+
+plot_temp = mvmr
+plot_temp = plot_temp[order(plot_temp$exposure),]
+plot_temp$order = 1:nrow(plot_temp)
+#plot_temp$order = ifelse(plot_temp$analysis == "mvmr", plot_temp$order, plot_temp$order - 0.5)
+plot_temp$label = ifelse(plot_temp$analysis == "mvmr", gsub("met-d-", "", plot_temp$exposure), "")
+ggplot() + 
+  geom_errorbar(data = plot_temp, mapping = aes(x = order, ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = analysis, alpha = ifelse(pval < 0.05, 1, 0)), size = 2.5, width = 0) +
+  geom_point(data = plot_temp, mapping = aes(x = order, y = b, color = analysis, stat = "identity", alpha = ifelse(pval < 0.05, 1, 0)), size = 20) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  geom_vline(xintercept = 2.5, size = 1, linetype = 2) +
+  #geom_vline(xintercept = 4.7, size = 1, linetype = 2) +
+  scale_x_discrete(limits = plot_temp$order, labels = plot_temp$label) + 
+  #scale_y_continuous(limits = c(-0.50, 0.70), breaks = seq(-0.40, 0.40, 0.2), labels = seq(-0.40, 0.40, 0.2)) +
+  scale_color_manual(breaks = c("mvmr", "mr"), labels = c("MVMR", "MR"), values = c("mr" = "darkgreen", "mvmr" = "purple")) +
+  guides(alpha = FALSE, color = guide_legend(ncol = 1)) +
+  labs(x = "", y = "CAD", color = "") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "top", legend.spacing = unit(-1, "cm"), axis.text.x = element_text(size = 80, color = "black"), axis.title.x = element_text(size = 80, color = "black"), axis.text.y = element_text(size = 80, color = "black", vjust = 0.1), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 80), legend.title = element_text(size = 10), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+ggsave(paste0(path, "figs/mvmr_vldl_vte.jpg"), device = "jpg", type = "cairo", height = 25, width = 40)
+
+mvmr = fread(paste0(path, "mr/ukbb_mvmr_ldl_results_20231017.csv"))
+mvmr = mvmr[which(mvmr$analysis_outcome == "cad" & mvmr$pval < 0.05/threshold & mvmr$id.exposure != "met-d-Clinical_LDL_C"),]
+met_to_out = fread(paste0(path, "mr/", biobank, "_cad_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$exposure %in% mvmr$id.exposure & met_to_out$method == "Inverse variance weighted"),]
+
+mvmr = mvmr[,c("id.exposure", "b", "se", "pval")]
+colnames(mvmr) = c("exposure", "b", "se", "pval")
+mvmr$analysis = "mvmr"
+met_to_out = met_to_out[,c("exposure", "b", "se", "pval")]
+met_to_out$analysis = "mr"
+
+plot_temp = rbind(mvmr, met_to_out)
+plot_temp = plot_temp[which(plot_temp$exposure %in% plot_temp$exposure[which(plot_temp$pval < 0.05/threshold & plot_temp$analysis == "mr")]),]
+plot_temp = plot_temp[which(grepl("XXL_VLDL_", plot_temp$exposure)),]
+plot_temp = plot_temp[order(plot_temp$exposure),]
+plot_temp$order = 1:nrow(plot_temp)
+#plot_temp$order = ifelse(plot_temp$analysis == "mvmr", plot_temp$order, plot_temp$order - 0.5)
+plot_temp$label = ifelse(plot_temp$analysis == "mvmr", gsub("met-d-", "", plot_temp$exposure), "")
+ggplot() + 
+  geom_errorbar(data = plot_temp, mapping = aes(x = order, ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = analysis), size = 2.5, width = 0) +
+  geom_point(data = plot_temp, mapping = aes(x = order, y = b, color = analysis, stat = "identity"), size = 20) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  #geom_vline(xintercept = 2.5, size = 1, linetype = 2) +
+  #geom_vline(xintercept = 4.7, size = 1, linetype = 2) +
+  scale_x_discrete(limits = plot_temp$order, labels = plot_temp$label) + 
+  #scale_y_continuous(limits = c(-0.50, 0.70), breaks = seq(-0.40, 0.40, 0.2), labels = seq(-0.40, 0.40, 0.2)) +
+  scale_color_manual(breaks = c("mvmr", "mr"), labels = c("MVMR", "MR"), values = c("mr" = "darkgreen", "mvmr" = "purple")) +
+  guides(alpha = FALSE, color = guide_legend(ncol = 1)) +
+  labs(x = "", y = "CAD", color = "") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "top", legend.spacing = unit(-1, "cm"), axis.text.x = element_text(size = 80, color = "black"), axis.title.x = element_text(size = 80, color = "black"), axis.text.y = element_text(size = 80, color = "black", vjust = 0.1), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 80), legend.title = element_text(size = 10), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+ggsave(paste0(path, "figs/mvmr_ldl_cad.jpg"), device = "jpg", type = "cairo", height = 25, width = 40)
+
+i = 1
+met_to_out = fread(paste0(path, "mr/", biobank, "_", outcome_list[i], "_met_to_out_mr_main_", today, ".csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+met_to_out = met_to_out[which(met_to_out$method == "Inverse variance weighted" & met_to_out$exposure == "met-d-GlycA"),]
+mod_temp = merge(met_to_out, raw, by.x = "exposure", by.y = "metabolite")
+mod_temp$color = ifelse(mod_temp$pval < 0.05/threshold, mod_temp$type, "gray")
+#
+res_temp = res[which(res$outcome == outcome_long[i] & res$metabolite == "met_d_GlycA"),]
+res_temp = res_temp %>% arrange(type)
+res_temp$color = ifelse(res_temp$pval < 0.05/threshold, res_temp$type, "gray")
+#
+mr = mod_temp[,c("exposure", "b", "se", "pval")]
+colnames(mr) = c("metabolite", "est", "ste", "pval")
+mr$analysis = "mr"
+epi = res_temp[,c("metabolite", "est", "ste", "pval")]
+epi$metabolite = gsub("met_d_", "met-d-", epi$metabolite)
+epi$analysis = "epi"
+plot_temp = rbind(mr, epi)
+plot_temp = plot_temp[order(plot_temp$metabolite),]
+plot_temp$order = 1:nrow(plot_temp)
+plot_temp$order = ifelse(plot_temp$analysis == "mr", plot_temp$order, plot_temp$order - 0.75)
+plot_temp$label = ifelse(plot_temp$analysis == "mr", plot_temp$metabolite, "")
+plot_temp$outcome = "cad"
+temp = rbind(temp, plot_temp)
+plot_temp = temp[1:6,]
+plot_temp$order = 1:nrow(plot_temp)
+plot_temp$order = ifelse(plot_temp$analysis == "mr", plot_temp$order, plot_temp$order - 0.75)
+plot_temp$outcome = ifelse(plot_temp$analysis == "mr", plot_temp$outcome, "")
+ggplot() + 
+  geom_errorbar(data = plot_temp, mapping = aes(x = order, ymin = est - 1.96 * ste, ymax = est + 1.96 * ste, color = analysis, alpha = ifelse(pval < 0.05/threshold, 1, 0)), size = 5, width = 0) +
+  geom_point(data = plot_temp, mapping = aes(x = order, y = est, color = analysis, stat = "identity"), size = 10) +
+  geom_hline(yintercept = 0, size = 1, linetype = 2) +
+  #geom_vline(xintercept = 10.125, size = 1, linetype = 2) +
+  #geom_vline(xintercept = 20.125, size = 1, linetype = 2) +
+  scale_x_discrete(limits = plot_temp$order, labels = toupper(plot_temp$outcome)) + 
+  scale_y_continuous(limits = c(-0.50, 0.70), breaks = seq(-0.40, 0.40, 0.2), labels = seq(-0.40, 0.40, 0.2)) +
+  scale_color_manual(breaks = c("epi", "mr"), labels = c("   ", "   "), values = c("epi" = "blue", "mr" = "red")) +
+  guides(alpha = FALSE, color = guide_legend(ncol = 1)) +
+  labs(x = "", y = "Effect Size for GlycA", color = "") + 
+  coord_flip() +
+  theme(plot.tag = element_text(size = 25), legend.position = "top", legend.spacing = unit(-1, "cm"), axis.text.x = element_text(size = 40, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_text(size = 40, color = "black", vjust = 0.1), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 25), legend.title = element_text(size = 10), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+ggsave(paste0(path, "figs/glyca.jpg"), device = "jpg", type = "cairo", height = 10, width = 15)
+
+##################################################
+########## PLOT MULTIVARIABLE MENDELIAN RANDOMIZATION 
+##################################################
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+biobank = "ukbb"
+threshold = 41
+today = "20230222"
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(TwoSampleMR)) {install_github("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(ggplot2)) {install_github("ggplot2"); library(ggplot2)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = str_replace(raw$metabolite, "met-d-IDL_IDL", "met-d-IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+temp = fread(paste0(path, "mr/ukbb_cad_met_to_out_mvmr_results_20230222.csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+temp = merge(temp, raw, by.x = "id.exposure", by.y = "metabolite")
+temp = temp[order(temp$type, temp$b),]
+temp$order = as.factor(1:nrow(temp))
+temp = temp[,c("id.exposure", "order")]
+
+outcome_list = c("cad", "pad", "vte")
+# MAKE FOREST PLOT
+for (i in 1:length(outcome_list)) {
+  print(outcome_list[i])
+  met_to_out = fread(paste0(path, "mr/ukbb_", outcome_list[i], "_met_to_out_mvmr_results_20230222.csv"), header = TRUE, stringsAsFactors = FALSE, verbose = FALSE)
+  met_to_out = merge(met_to_out, raw, by.x = "id.exposure", by.y = "metabolite")
+  mod_temp = merge(temp, met_to_out, by = "id.exposure")
+  mod_temp = mod_temp[order(mod_temp$order),]
+  ggplot() +
+    geom_point(data = mod_temp, mapping = aes(x = order, y = b, color = type, alpha = ifelse(pval < 0.05, "Yes", "No")), size = 1) +
+    coord_flip () + 
+    geom_errorbar(data = mod_temp, mapping = aes(x = order, ymin = b - 1.96 * se, ymax = b + 1.96 * se, color = type, alpha = ifelse(pval < 0.05, "Yes", "No")), width = 0.5, size = 1) +
+    scale_x_discrete(limits = mod_temp$order, labels = mod_temp$id.exposure) + 
+    labs(x = "", y = paste0("Effect of genetically-determined metabolite on ", toupper(outcome_list[i])), color = "", alpha = "Significant") + 
+    theme(axis.text.x = element_text(size = 15), axis.title.x = element_text(size = 15), axis.text.y = element_text(size = 5), axis.title.y = element_text(size = 15), legend.text = element_text(size = 15), legend.title = element_text(size = 15), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"))
+  ggsave(paste0(path, "figs/", today, "/", outcome_list[i], "_mvmr.jpg"), device = "jpg", type = "cairo", height = 10, width = 10)
+}
+
+##################################################
+########## MUNGE SUMMARY STATISTICS
+##################################################
+
+ish -l h_rt=12:00:00 -l h_vmem=50g
+use R-4.1 
+use Anaconda3
+use Google-Cloud-SDK
+#gcloud auth login --no-launch-browser
+
+cd /medpop/esp2/jiwoolee/ldsc
+source activate ldsc
+
+python munge_sumstats.py \
+--sumstats /medpop/esp2/jiwoolee/met_rep/gwas/ukbb_vte_sumstat_clean.txt.gz \
+--N 890119 \
+--snp SNP \
+--a1 effect_allele \
+--a2 other_allele \
+--p pval \
+--out /medpop/esp2/jiwoolee/met_rep/gwas/ukbb_vte_sumstat_clean \
+--merge-alleles ./eur_w_ld_chr/w_hm3.snplist
+
+# N CAD = 184305
+# N PAD = 243060
+# N VTE = 890119
+
+##################################################
+########## CALCULATE GENETIC CORRELATION
+##################################################
+
+python ldsc.py \
+--rg /medpop/esp2/jiwoolee/met_rep/gwas/ukbb_cad_sumstat_clean.sumstats.gz,/medpop/esp2/jiwoolee/met_rep/gwas/ukbb_pad_sumstat_clean.sumstats.gz \
+--ref-ld-chr eur_w_ld_chr/ \
+--w-ld-chr eur_w_ld_chr/ \
+--out /medpop/esp2/jiwoolee/met_rep/gwas/cad_pad
+
+python ldsc.py \
+--rg /medpop/esp2/jiwoolee/met_rep/gwas/ukbb_cad_sumstat_clean.sumstats.gz,/medpop/esp2/jiwoolee/met_rep/gwas/ukbb_vte_sumstat_clean.sumstats.gz \
+--ref-ld-chr eur_w_ld_chr/ \
+--w-ld-chr eur_w_ld_chr/ \
+--out /medpop/esp2/jiwoolee/met_rep/gwas/cad_vte
+
+python ldsc.py \
+--rg /medpop/esp2/jiwoolee/met_rep/gwas/ukbb_pad_sumstat_clean.sumstats.gz,/medpop/esp2/jiwoolee/met_rep/gwas/ukbb_vte_sumstat_clean.sumstats.gz \
+--ref-ld-chr eur_w_ld_chr/ \
+--w-ld-chr eur_w_ld_chr/ \
+--out /medpop/esp2/jiwoolee/met_rep/gwas/pad_vte
+
+path = "C:/Jiwoo_Lee/Research/Genomic_Metabolomic_2022/"
+today = "20231017"
+biobank = "ukbb"
+threshold = 41
+
+if(!require(data.table)) {install.packages("data.table"); library(data.table)}
+if(!require(TwoSampleMR)) {install_github("TwoSampleMR"); library(TwoSampleMR)}
+if(!require(ggplot2)) {install_github("ggplot2"); library(ggplot2)}
+if(!require(grid)) {install.packages("grid"); library(grid)}
+if(!require(gridExtra)) {install.packages("gridExtra"); library(gridExtra)}
+
+# DEFINE FUNCTIONS
+convert_camel_case <- function(x) {
+  string_vec <- x
+  # substitute underscores into spaces
+  string_vec <- gsub(" ", "_", string_vec)
+  # remove apostrophes
+  string_vec <- gsub("\\'", "", string_vec)
+  # remove commas
+  string_vec <- gsub(",", "", string_vec)
+  # remove dashes
+  string_vec <- gsub("\\-", "_", string_vec)
+  # remove \
+  string_vec <- gsub("/", "_", string_vec)
+  # convert lowercase
+  #string_vec <- tolower(string_vec)
+  return(string_vec)
+}
+
+# LOAD DATA
+raw = fread(file = paste0(path, "raw_jwl.txt"), header = FALSE, stringsAsFactors = FALSE)
+colnames(raw) = c("id", "metabolite", "class1", "unit", "num1", "num2", "class2", "type")
+if(!require(stringr)) {install.packages("stringr"); library(stringr)}
+raw$metabolite = str_replace(raw$metabolite, "met-d-IDL_IDL", "met-d-IDL")
+met_list = raw$metabolite
+raw = raw[,c("metabolite", "type")]
+
+outcome_list = c("CAD", "PAD", "VTE")
+
+res_plot = data.frame("phenotype1" = c(rep("CAD", 3), rep("PAD", 3), rep("VTE", 3)),
+  "phenotype2" = c(rep(c("CAD", "PAD", "VTE"), 3)),
+  "beta" = c(1.00, 0.6615, 0.13, 
+             0.6615, 1.00, 0.2463,
+             0.13, 0.2463, 1.00),
+  "pval" = c("", "4.51e-51", "3.28e-6",
+             "4.51e-51", "", "0.0068",
+             "3.28e-6", "0.0068", ""))
+
+ggplot() +
+  geom_tile(data = res_plot, mapping = aes(x = phenotype1, y = phenotype2), fill = "white") +
+  geom_point(data = res_plot, mapping = aes(x = phenotype1, y = phenotype2, color = beta), size = 75) +
+  geom_point(data = res_plot, mapping = aes(x = phenotype1, y = phenotype2, color = beta), size = 75, shape = 1, colour = "black") +
+  geom_text(data = res_plot, mapping = aes(x = phenotype1, y = phenotype2, label = round(beta, 2)), size = 10) +
+  scale_x_discrete(limits = rev) +
+  scale_y_discrete(limits = rev) +
+  scale_color_gradient2(low = "white", mid = "white", high = "red") +
+  #guides(fill = FALSE, color = FALSE) +
+  labs(x = "", y = "", color = "Genetic\nCorrelation\nCoefficient", size = "P-value") + 
+  theme(plot.tag = element_text(size = 25), legend.position = "right", legend.spacing = unit(0, "cm"), axis.text.x = element_text(size = 40, color = "black"), axis.title.x = element_text(size = 40, color = "black"), axis.text.y = element_text(size = 40, color = "black"), axis.title.y = element_text(size = 40, color = "black"), legend.text = element_text(size = 30), legend.title = element_text(size = 40), panel.grid.major = element_line(size = 0.1, color = "gray"), panel.grid.minor = element_line(size = 0.1, color = "gray"), panel.background = element_blank(), strip.background = element_rect(fill = "gray95"), axis.line = element_line(colour = "black"), plot.margin = unit(c(0, 0, 0, 0),"cm"))
+ggsave(paste0(path, "figs/genetic_correlation.jpg"), device = "jpg", type = "cairo", height = 10, width = 15)
